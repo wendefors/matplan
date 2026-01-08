@@ -1,20 +1,38 @@
+import React, { useEffect, useState } from "react";
+import { HashRouter, Routes, Route, Link, useLocation } from "react-router-dom";
+import { Recipe, WeekPlan } from "./types.ts";
+import {
+  isAuthorized,
+  getPlans,
+  savePlans,
+} from "./services/storageService.ts";
+import MealPlanner from "./components/MealPlanner.tsx";
+import RecipeList from "./components/RecipeList.tsx";
+import Login from "./components/Login.tsx";
+import { supabase } from "./supabaseClient.ts";
 
-import React, { useState, useEffect } from 'react';
-import { HashRouter, Routes, Route, Link, useLocation } from 'react-router-dom';
-import { Recipe, WeekPlan } from './types.ts';
-import { getRecipes, saveRecipes, getPlans, savePlans, isAuthorized } from './services/storageService.ts';
-import MealPlanner from './components/MealPlanner.tsx';
-import RecipeList from './components/RecipeList.tsx';
-import Login from './components/Login.tsx';
+type DbRecipe = {
+  id: number;
+  name: string;
+  source: string;
+  has_recipe_content: boolean;
+  category: string;
+  last_cooked: string | null;
+};
 
-const NavLink: React.FC<{ to: string, children: React.ReactNode }> = ({ to, children }) => {
+const NavLink: React.FC<{ to: string; children: React.ReactNode }> = ({
+  to,
+  children,
+}) => {
   const location = useLocation();
   const isActive = location.pathname === to;
   return (
-    <Link 
-      to={to} 
+    <Link
+      to={to}
       className={`flex-1 text-center py-4 text-sm font-semibold transition-colors ${
-        isActive ? 'text-emerald-600 border-t-2 border-emerald-600' : 'text-gray-500 hover:text-gray-800'
+        isActive
+          ? "text-emerald-600 border-t-2 border-emerald-600"
+          : "text-gray-500 hover:text-gray-800"
       }`}
     >
       {children}
@@ -22,30 +40,107 @@ const NavLink: React.FC<{ to: string, children: React.ReactNode }> = ({ to, chil
   );
 };
 
+async function fetchRecipesFromSupabase(): Promise<Recipe[]> {
+  const { data, error } = await supabase
+    .from("recipes")
+    .select("id,name,source,has_recipe_content,category,last_cooked")
+    .order("name", { ascending: true });
+
+  if (error) throw error;
+
+  return ((data ?? []) as DbRecipe[]).map((r) => ({
+    id: r.id,
+    name: r.name,
+    source: r.source,
+    hasRecipeContent: r.has_recipe_content,
+    category: r.category,
+    lastCooked: r.last_cooked,
+  }));
+}
+
+async function saveRecipesToSupabase(newRecipes: Recipe[]): Promise<void> {
+  const payload = newRecipes.map((r) => ({
+    id: r.id,
+    name: r.name,
+    source: r.source,
+    has_recipe_content: r.hasRecipeContent,
+    category: r.category,
+    last_cooked: r.lastCooked,
+  }));
+
+  // Upsert på id (du kan köra detta flera gånger utan dubbletter)
+  const { error } = await supabase
+    .from("recipes")
+    .upsert(payload, { onConflict: "id" });
+
+  if (error) throw error;
+}
+
 const App: React.FC = () => {
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [plans, setPlans] = useState<WeekPlan[]>([]);
   const [authed, setAuthed] = useState(false);
 
   useEffect(() => {
-    if (isAuthorized()) {
+    (async () => {
+      if (!isAuthorized()) return;
+
       setAuthed(true);
-      setRecipes(getRecipes());
+
+      // Plans kör vi kvar lokalt tills vidare
       setPlans(getPlans());
-    }
+
+      // Recept hämtas från Supabase
+      try {
+        const r = await fetchRecipesFromSupabase();
+        setRecipes(r);
+      } catch (e) {
+        console.error("Kunde inte hämta recept från Supabase:", e);
+        setRecipes([]);
+      }
+    })();
   }, []);
 
   if (!authed) {
-    return <Login onSuccess={() => {
-      setAuthed(true);
-      setRecipes(getRecipes());
-      setPlans(getPlans());
-    }} />;
+    return (
+      <Login
+        onSuccess={async () => {
+          setAuthed(true);
+
+          // Plans kvar lokalt tills vidare
+          setPlans(getPlans());
+
+          // Recept från Supabase
+          try {
+            const r = await fetchRecipesFromSupabase();
+            setRecipes(r);
+          } catch (e) {
+            console.error("Kunde inte hämta recept från Supabase:", e);
+            setRecipes([]);
+          }
+        }}
+      />
+    );
   }
 
-  const handleUpdateRecipes = (newRecipes: Recipe[]) => {
+  const handleUpdateRecipes = async (newRecipes: Recipe[]) => {
+    // Optimistisk uppdatering i UI
     setRecipes(newRecipes);
-    saveRecipes(newRecipes);
+
+    // Spara till Supabase
+    try {
+      await saveRecipesToSupabase(newRecipes);
+    } catch (e) {
+      console.error("Kunde inte spara recept till Supabase:", e);
+
+      // Återladda från Supabase vid fel, så vi inte hamnar i konstigt läge
+      try {
+        const r = await fetchRecipesFromSupabase();
+        setRecipes(r);
+      } catch (e2) {
+        console.error("Kunde inte återladda recept från Supabase:", e2);
+      }
+    }
   };
 
   const handleUpdatePlans = (newPlans: WeekPlan[]) => {
@@ -53,46 +148,98 @@ const App: React.FC = () => {
     savePlans(newPlans);
   };
 
+  // Realtime: om din fru ändrar recept / senast lagad på sin enhet → uppdatera hos dig
+  useEffect(() => {
+    if (!authed) return;
+
+    const channel = supabase
+      .channel("recipes-sync")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "recipes" },
+        async () => {
+          try {
+            const r = await fetchRecipesFromSupabase();
+            setRecipes(r);
+          } catch (e) {
+            console.error("Realtime reload misslyckades:", e);
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [authed]);
+
   return (
     <HashRouter>
       <div className="min-h-screen flex flex-col max-w-lg mx-auto bg-white shadow-xl relative pb-20 md:pb-0">
         <header className="px-6 pt-8 pb-4 bg-white sticky top-0 z-10 border-b border-gray-100">
-          <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Matplaneraren</h1>
+          <h1 className="text-2xl font-bold text-gray-900 tracking-tight">
+            Matplaneraren
+          </h1>
           <p className="text-sm text-gray-500">Planera smart, ät gott.</p>
         </header>
 
         <main className="flex-1 overflow-y-auto px-4 py-6">
           <Routes>
-            <Route path="/" element={
-              <MealPlanner 
-                recipes={recipes} 
-                plans={plans} 
-                onUpdatePlans={handleUpdatePlans} 
-                onUpdateRecipes={handleUpdateRecipes}
-              />
-            } />
-            <Route path="/recipes" element={
-              <RecipeList 
-                recipes={recipes} 
-                onUpdateRecipes={handleUpdateRecipes} 
-              />
-            } />
+            <Route
+              path="/"
+              element={
+                <MealPlanner
+                  recipes={recipes}
+                  plans={plans}
+                  onUpdatePlans={handleUpdatePlans}
+                  onUpdateRecipes={handleUpdateRecipes}
+                />
+              }
+            />
+            <Route
+              path="/recipes"
+              element={
+                <RecipeList recipes={recipes} onUpdateRecipes={handleUpdateRecipes} />
+              }
+            />
           </Routes>
         </main>
 
         <nav className="fixed bottom-0 left-0 right-0 max-w-lg mx-auto bg-white border-t border-gray-100 flex shadow-2xl z-20">
           <NavLink to="/">
             <div className="flex flex-col items-center gap-1">
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                className="h-6 w-6"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
+                />
               </svg>
               Planering
             </div>
           </NavLink>
           <NavLink to="/recipes">
             <div className="flex flex-col items-center gap-1">
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                className="h-6 w-6"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"
+                />
               </svg>
               Mina rätter
             </div>
