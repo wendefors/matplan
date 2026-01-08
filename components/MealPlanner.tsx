@@ -166,27 +166,33 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
   };
 
   const handleExport = () => {
-    const activePlans = (currentPlan.days ?? []).filter(
-      (d) => activeDayIndices.includes(d.dayId) && d.recipeId !== null
-    );
-    if (activePlans.length === 0) return;
+  const activePlans = currentPlan.days.filter(
+    (d) => activeDayIndices.includes(d.dayId) && d.recipeId !== null
+  );
 
-    // 1) Exportera kalenderfil
-    generateICS(selectedWeek, activePlans, recipes);
+  if (activePlans.length === 0) return;
 
-    // 2) Sätt "Senast lagad" = idag på recepten som ingår i exporten
-    const todayIso = new Date().toISOString().slice(0, 10);
-    const recipeIdsInExport = new Set<number>(
-      activePlans.map((p) => p.recipeId!).filter((id): id is number => id !== null)
-    );
+  // 1. Exportera kalenderfilen
+  generateICS(selectedWeek, activePlans, recipes);
 
-    const updatedRecipes = recipes.map((r) =>
-      recipeIdsInExport.has(r.id) ? { ...r, lastCooked: todayIso } : r
-    );
+  // 2. Sätt "Senast lagad" = idag (YYYY-MM-DD)
+  const todayIsoDate = new Date().toISOString().slice(0, 10);
 
-    onUpdateRecipes(updatedRecipes);
-  };
+  const recipeIdsInExport = new Set<number>(
+    activePlans
+      .map((p) => p.recipeId)
+      .filter((id): id is number => id !== null)
+  );
 
+  const updatedRecipes = recipes.map((r) =>
+    recipeIdsInExport.has(r.id)
+      ? { ...r, lastCooked: todayIsoDate }
+      : r
+  );
+
+  // Detta går hela vägen till App.tsx → Supabase
+  onUpdateRecipes(updatedRecipes);
+};
   const formatDate = (isoString?: string | null) => {
     if (!isoString) return "Aldrig";
     return new Date(isoString).toLocaleDateString("sv-SE");
