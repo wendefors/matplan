@@ -8,6 +8,18 @@ export const SWEDISH_DAYS = [
   "Söndag",
 ];
 
+export const RECIPE_CATEGORIES = [
+  "Kött",
+  "Fisk",
+  "Vegetariskt",
+  "Kyckling",
+  "Pasta",
+  "Soppa",
+  "Annat",
+] as const;
+
+export type RecipeCategory = typeof RECIPE_CATEGORIES[number];
+
 export type DayPlan = {
   dayId: number; // 0..6 (matchar index i SWEDISH_DAYS)
   recipeId: number | null;
@@ -16,7 +28,7 @@ export type DayPlan = {
 export type WeekPlan = {
   weekIdentifier: string; // t.ex. "2026-W02"
   days: DayPlan[];
-  activeDayIndices?: number[]; // NYTT: vilka dagar är "tända" för just denna vecka
+  activeDayIndices?: number[]; // vilka dagar är "tända" för just denna vecka
 };
 
 export type Recipe = {
@@ -24,6 +36,6 @@ export type Recipe = {
   name: string;
   source: string;
   hasRecipeContent: boolean;
-  category: string;
+  category: RecipeCategory; // <-- VIKTIG ÄNDRING
   lastCooked: string | null;
 };
