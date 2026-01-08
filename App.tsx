@@ -11,9 +11,9 @@ type DbRecipe = {
   id: number;
   user_id: string;
   name: string;
-  source: string;
+  source: string | null;
   has_recipe_content: boolean;
-  category: string;
+  category: string | null;
   last_cooked: string | null;
 };
 
@@ -48,42 +48,52 @@ async function getCurrentUserId(): Promise<string> {
   return data.user.id;
 }
 
-async function fetchRecipes(): Promise<Recipe[]> {
+async function fetchRecipesFromSupabase(): Promise<Recipe[]> {
   const { data, error } = await supabase
     .from("recipes")
-    .select(
-      "id,user_id,name,source,has_recipe_content,category,last_cooked"
-    )
-    .order("name");
+    .select("id,user_id,name,source,has_recipe_content,category,last_cooked")
+    .order("name", { ascending: true });
 
   if (error) throw error;
 
-  return (data as DbRecipe[]).map((r) => ({
+  return ((data ?? []) as DbRecipe[]).map((r) => ({
     id: r.id,
     name: r.name,
-    source: r.source,
+    source: r.source ?? "",
     hasRecipeContent: r.has_recipe_content,
-    category: r.category,
+    category: r.category ?? "Övrigt",
     lastCooked: r.last_cooked,
   }));
 }
 
-async function saveRecipes(recipes: Recipe[]) {
+async function saveRecipesToSupabase(recipes: Recipe[]): Promise<void> {
   const userId = await getCurrentUserId();
 
   const payload = recipes.map((r) => ({
     user_id: userId,
-    id: r.id,
+    id: r.id, // <-- OBS: måste vara ett "litet" heltal (vi bytte från Date.now() till löpnummer)
     name: r.name,
-    source: r.source,
+    source: r.source || null,
     has_recipe_content: r.hasRecipeContent,
-    category: r.category,
+    category: r.category || null,
     last_cooked: r.lastCooked,
   }));
 
   const { error } = await supabase
-  .from("recipes")
-  .upsert(payload, { onConflict: "id" });
+    .from("recipes")
+    .upsert(payload, { onConflict: "id" });
+
+  if (error) throw error;
+}
+
+async function deleteRecipeFromSupabase(id: number): Promise<void> {
+  const userId = await getCurrentUserId();
+
+  const { error } = await supabase
+    .from("recipes")
+    .delete()
+    .eq("user_id", userId)
+    .eq("id", id);
 
   if (error) throw error;
 }
@@ -114,19 +124,22 @@ const App: React.FC = () => {
         setAuthed(true);
         setPlans(getPlans());
 
-        const r = await fetchRecipes();
-        setRecipes(r);
+        try {
+          const r = await fetchRecipesFromSupabase();
+          setRecipes(r);
+        } catch (e) {
+          console.error("Kunde inte hämta recept från Supabase:", e);
+          setRecipes([]);
+        }
       } catch (e) {
         console.error("Init error:", e);
         setAuthed(false);
       }
     })();
 
-    const { data: sub } = supabase.auth.onAuthStateChange(
-      (_event, session) => {
-        setAuthed(!!session);
-      }
-    );
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      setAuthed(!!session);
+    });
 
     return () => {
       mounted = false;
@@ -145,7 +158,7 @@ const App: React.FC = () => {
         { event: "*", schema: "public", table: "recipes" },
         async () => {
           try {
-            const r = await fetchRecipes();
+            const r = await fetchRecipesFromSupabase();
             setRecipes(r);
           } catch (e) {
             console.error("Realtime reload failed:", e);
@@ -168,7 +181,7 @@ const App: React.FC = () => {
           setPlans(getPlans());
 
           try {
-            const r = await fetchRecipes();
+            const r = await fetchRecipesFromSupabase();
             setRecipes(r);
           } catch (e) {
             console.error("Load after login failed:", e);
@@ -185,12 +198,28 @@ const App: React.FC = () => {
     setRecipes(newRecipes); // optimistisk UI
 
     try {
-      await saveRecipes(newRecipes);
+      await saveRecipesToSupabase(newRecipes);
     } catch (e) {
       console.error("SAVE FAILED:", e);
       alert("Kunde inte spara recept – se Console.");
       try {
-        const r = await fetchRecipes();
+        const r = await fetchRecipesFromSupabase();
+        setRecipes(r);
+      } catch {}
+    }
+  };
+
+  const handleDeleteRecipe = async (id: number) => {
+    // Optimistiskt i UI
+    setRecipes((prev) => prev.filter((r) => r.id !== id));
+
+    try {
+      await deleteRecipeFromSupabase(id);
+    } catch (e) {
+      console.error("DELETE FAILED:", e);
+      alert("Kunde inte ta bort recept – se Console.");
+      try {
+        const r = await fetchRecipesFromSupabase();
         setRecipes(r);
       } catch {}
     }
@@ -232,6 +261,7 @@ const App: React.FC = () => {
                 <RecipeList
                   recipes={recipes}
                   onUpdateRecipes={handleUpdateRecipes}
+                  onDeleteRecipe={handleDeleteRecipe}
                 />
               }
             />
@@ -239,8 +269,45 @@ const App: React.FC = () => {
         </main>
 
         <nav className="fixed bottom-0 left-0 right-0 max-w-lg mx-auto bg-white border-t border-gray-100 flex shadow-2xl z-20">
-          <NavLink to="/">Planering</NavLink>
-          <NavLink to="/recipes">Mina rätter</NavLink>
+          <NavLink to="/">
+            <div className="flex flex-col items-center gap-1">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                className="h-6 w-6"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
+                />
+              </svg>
+              Planering
+            </div>
+          </NavLink>
+
+          <NavLink to="/recipes">
+            <div className="flex flex-col items-center gap-1">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                className="h-6 w-6"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"
+                />
+              </svg>
+              Mina rätter
+            </div>
+          </NavLink>
         </nav>
       </div>
     </HashRouter>
