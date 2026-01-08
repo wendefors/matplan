@@ -48,8 +48,7 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
         : ALL_DAYS;
 
     setActiveDayIndices(fromPlan);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedWeek]);
+  }, [selectedWeek, currentPlan.activeDayIndices]);
 
   // Hjälpare: spara aktuell veckas activeDayIndices in i plans
   const persistActiveDaysForWeek = (newActive: number[]) => {
