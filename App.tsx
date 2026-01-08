@@ -82,10 +82,8 @@ async function saveRecipes(recipes: Recipe[]) {
   }));
 
   const { error } = await supabase
-    .from("recipes")
-    .upsert(payload, {
-      onConflict: "user_id,id",
-    });
+  .from("recipes")
+  .upsert(payload, { onConflict: "id" });
 
   if (error) throw error;
 }
