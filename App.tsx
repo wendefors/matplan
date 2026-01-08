@@ -1,11 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { HashRouter, Routes, Route, Link, useLocation } from "react-router-dom";
 import { Recipe, WeekPlan } from "./types.ts";
-import {
-  isAuthorized,
-  getPlans,
-  savePlans,
-} from "./services/storageService.ts";
+import { getPlans, savePlans } from "./services/storageService.ts";
 import MealPlanner from "./components/MealPlanner.tsx";
 import RecipeList from "./components/RecipeList.tsx";
 import Login from "./components/Login.tsx";
@@ -68,7 +64,6 @@ async function saveRecipesToSupabase(newRecipes: Recipe[]): Promise<void> {
     last_cooked: r.lastCooked,
   }));
 
-  // Upsert på id (du kan köra detta flera gånger utan dubbletter)
   const { error } = await supabase
     .from("recipes")
     .upsert(payload, { onConflict: "id" });
@@ -81,24 +76,38 @@ const App: React.FC = () => {
   const [plans, setPlans] = useState<WeekPlan[]>([]);
   const [authed, setAuthed] = useState(false);
 
+  // Auth via Supabase-session (ersätter isAuthorized())
   useEffect(() => {
+    let mounted = true;
+
     (async () => {
-      if (!isAuthorized()) return;
+      const { data } = await supabase.auth.getSession();
+      if (!mounted) return;
 
-      setAuthed(true);
+      if (data.session) {
+        setAuthed(true);
+        setPlans(getPlans());
 
-      // Plans kör vi kvar lokalt tills vidare
-      setPlans(getPlans());
-
-      // Recept hämtas från Supabase
-      try {
-        const r = await fetchRecipesFromSupabase();
-        setRecipes(r);
-      } catch (e) {
-        console.error("Kunde inte hämta recept från Supabase:", e);
-        setRecipes([]);
+        try {
+          const r = await fetchRecipesFromSupabase();
+          setRecipes(r);
+        } catch (e) {
+          console.error("Kunde inte hämta recept från Supabase:", e);
+          setRecipes([]);
+        }
+      } else {
+        setAuthed(false);
       }
     })();
+
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      setAuthed(!!session);
+    });
+
+    return () => {
+      mounted = false;
+      sub.subscription.unsubscribe();
+    };
   }, []);
 
   if (!authed) {
@@ -148,7 +157,7 @@ const App: React.FC = () => {
     savePlans(newPlans);
   };
 
-  // Realtime: om din fru ändrar recept / senast lagad på sin enhet → uppdatera hos dig
+  // Realtime: om någon ändrar recept / senast lagad på annan enhet → uppdatera här
   useEffect(() => {
     if (!authed) return;
 
@@ -199,7 +208,10 @@ const App: React.FC = () => {
             <Route
               path="/recipes"
               element={
-                <RecipeList recipes={recipes} onUpdateRecipes={handleUpdateRecipes} />
+                <RecipeList
+                  recipes={recipes}
+                  onUpdateRecipes={handleUpdateRecipes}
+                />
               }
             />
           </Routes>
