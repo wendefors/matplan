@@ -55,7 +55,14 @@ async function fetchRecipesFromSupabase(): Promise<Recipe[]> {
 }
 
 async function saveRecipesToSupabase(newRecipes: Recipe[]): Promise<void> {
+  const { data: userData, error: userErr } = await supabase.auth.getUser();
+  if (userErr) throw userErr;
+
+  const userId = userData.user?.id;
+  if (!userId) throw new Error("No logged in user (missing auth user id)");
+
   const payload = newRecipes.map((r) => ({
+    user_id: userId,
     id: r.id,
     name: r.name,
     source: r.source,
