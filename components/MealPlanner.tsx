@@ -1,7 +1,6 @@
 import React, { useState, useMemo, useEffect } from "react";
 import { Recipe, WeekPlan, SWEDISH_DAYS, DayPlan } from "../types";
 import { generateICS } from "../services/icsService";
-import { getActiveDayIndices, saveActiveDayIndices } from "../services/storageService";
 
 interface MealPlannerProps {
   recipes: Recipe[];
@@ -9,6 +8,8 @@ interface MealPlannerProps {
   onUpdatePlans: (plans: WeekPlan[]) => void;
   onUpdateRecipes: (recipes: Recipe[]) => void;
 }
+
+const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
 
 const MealPlanner: React.FC<MealPlannerProps> = ({
   recipes,
@@ -26,26 +27,57 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
     return `${d.getUTCFullYear()}-W${String(weekNo).padStart(2, "0")}`;
   });
 
-  const [activeDayIndices, setActiveDayIndices] = useState<number[]>(getActiveDayIndices());
+  const [activeDayIndices, setActiveDayIndices] = useState<number[]>(ALL_DAYS);
   const [showRecipeModal, setShowRecipeModal] = useState<number | null>(null);
-
-  useEffect(() => {
-    saveActiveDayIndices(activeDayIndices);
-  }, [activeDayIndices]);
 
   const currentPlan = useMemo(() => {
     return (
       plans.find((p) => p.weekIdentifier === selectedWeek) || {
         weekIdentifier: selectedWeek,
         days: [],
+        activeDayIndices: ALL_DAYS,
       }
     );
   }, [plans, selectedWeek]);
 
+  // När du byter vecka: läs veckans sparade "tända/släckta" (eller default ALLA)
+  useEffect(() => {
+    const fromPlan =
+      currentPlan.activeDayIndices && currentPlan.activeDayIndices.length > 0
+        ? [...currentPlan.activeDayIndices].sort((a, b) => a - b)
+        : ALL_DAYS;
+
+    setActiveDayIndices(fromPlan);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedWeek]);
+
+  // Hjälpare: spara aktuell veckas activeDayIndices in i plans
+  const persistActiveDaysForWeek = (newActive: number[]) => {
+    const normalized = Array.from(new Set(newActive))
+      .filter((n) => n >= 0 && n <= 6)
+      .sort((a, b) => a - b);
+
+    const otherPlans = plans.filter((p) => p.weekIdentifier !== selectedWeek);
+    const existing = plans.find((p) => p.weekIdentifier === selectedWeek);
+
+    const merged: WeekPlan = {
+      weekIdentifier: selectedWeek,
+      days: existing?.days ?? [],
+      activeDayIndices: normalized,
+    };
+
+    onUpdatePlans([...otherPlans, merged]);
+  };
+
   const toggleDay = (idx: number) => {
-    setActiveDayIndices((prev) =>
-      prev.includes(idx) ? prev.filter((i) => i !== idx) : [...prev, idx].sort()
-    );
+    setActiveDayIndices((prev) => {
+      const next = prev.includes(idx)
+        ? prev.filter((i) => i !== idx)
+        : [...prev, idx].sort((a, b) => a - b);
+
+      persistActiveDaysForWeek(next);
+      return next;
+    });
   };
 
   const updateDayRecipe = (dayId: number, recipeId: number | null) => {
@@ -59,10 +91,14 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
       } else {
         newPlans[existingPlanIdx].days.push({ dayId, recipeId });
       }
+
+      // Bevara aktiva dagar för veckan
+      newPlans[existingPlanIdx].activeDayIndices = activeDayIndices;
     } else {
       newPlans.push({
         weekIdentifier: selectedWeek,
         days: [{ dayId, recipeId }],
+        activeDayIndices: activeDayIndices,
       });
     }
 
@@ -117,7 +153,11 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
     });
 
     const otherPlans = plans.filter((p) => p.weekIdentifier !== selectedWeek);
-    onUpdatePlans([...otherPlans, { weekIdentifier: selectedWeek, days: newDayPlans }]);
+
+    onUpdatePlans([
+      ...otherPlans,
+      { weekIdentifier: selectedWeek, days: newDayPlans, activeDayIndices },
+    ]);
   };
 
   const randomizeDay = (dayId: number) => {
@@ -126,7 +166,7 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
   };
 
   const handleExport = () => {
-    const activePlans = currentPlan.days.filter(
+    const activePlans = (currentPlan.days ?? []).filter(
       (d) => activeDayIndices.includes(d.dayId) && d.recipeId !== null
     );
     if (activePlans.length === 0) return;
@@ -200,19 +240,8 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
           className="flex-none bg-gray-900 text-white p-4 rounded-2xl shadow-lg shadow-gray-200 active:scale-95 transition-transform"
           title="Exportera till kalender"
         >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            className="h-6 w-6"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"
-            />
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
           </svg>
         </button>
       </div>
@@ -238,38 +267,16 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
                       onClick={() => randomizeDay(dayIdx)}
                       className="p-1.5 text-gray-400 hover:text-emerald-500 bg-gray-50 rounded-lg transition-colors"
                     >
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        className="h-5 w-5"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-                        />
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                       </svg>
                     </button>
                     <button
                       onClick={() => setShowRecipeModal(dayIdx)}
                       className="p-1.5 text-gray-400 hover:text-emerald-500 bg-gray-50 rounded-lg transition-colors"
                     >
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        className="h-5 w-5"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
-                        />
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                       </svg>
                     </button>
                   </div>
@@ -277,16 +284,12 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
 
                 {recipe ? (
                   <div>
-                    <h3 className="text-lg font-bold text-gray-900 leading-tight mb-1">
-                      {recipe.name}
-                    </h3>
+                    <h3 className="text-lg font-bold text-gray-900 leading-tight mb-1">{recipe.name}</h3>
                     <div className="flex flex-wrap gap-2 items-center">
                       <span className="text-[10px] bg-emerald-50 text-emerald-600 px-1.5 py-0.5 rounded font-bold uppercase tracking-tighter">
                         {recipe.category}
                       </span>
-                      <span className="text-[10px] text-gray-400">
-                        Lagad: {formatDate(recipe.lastCooked)}
-                      </span>
+                      <span className="text-[10px] text-gray-400">Lagad: {formatDate(recipe.lastCooked)}</span>
                     </div>
                   </div>
                 ) : (
@@ -309,13 +312,7 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
             <div className="p-6 border-b border-gray-100 flex justify-between items-center">
               <h3 className="text-xl font-bold">Välj en rätt</h3>
               <button onClick={() => setShowRecipeModal(null)} className="text-gray-400 hover:text-gray-600">
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  className="h-6 w-6"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
