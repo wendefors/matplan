@@ -5,9 +5,14 @@ import { Recipe, RecipeCategory, RECIPE_CATEGORIES } from '../types';
 interface RecipeListProps {
   recipes: Recipe[];
   onUpdateRecipes: (recipes: Recipe[]) => void;
+  onDeleteRecipe: (id: number) => void;
 }
 
-const RecipeList: React.FC<RecipeListProps> = ({ recipes, onUpdateRecipes }) => {
+const RecipeList: React.FC<RecipeListProps> = ({
+  recipes,
+  onUpdateRecipes,
+  onDeleteRecipe,
+}) => {
   const [isAdding, setIsAdding] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -63,10 +68,10 @@ const RecipeList: React.FC<RecipeListProps> = ({ recipes, onUpdateRecipes }) => 
   };
 
   const handleDelete = (id: number) => {
-    if (confirm('Är du säker på att du vill ta bort rätten?')) {
-      onUpdateRecipes(recipes.filter(r => r.id !== id));
-    }
-  };
+  if (confirm("Vill du ta bort denna rätt?")) {
+    onDeleteRecipe(id);
+  }
+};
 
   const startEdit = (recipe: Recipe) => {
     setEditingId(recipe.id);
