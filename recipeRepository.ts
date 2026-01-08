@@ -27,3 +27,12 @@ export async function fetchRecipes(): Promise<Recipe[]> {
     lastCooked: r.last_cooked,
   }));
 }
+
+export async function setLastCooked(recipeId: number, isoDate: string) {
+  const { error } = await supabase
+    .from("recipes")
+    .update({ last_cooked: isoDate })
+    .eq("id", recipeId);
+
+  if (error) throw error;
+}
