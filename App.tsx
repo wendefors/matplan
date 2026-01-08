@@ -81,21 +81,26 @@ const App: React.FC = () => {
     let mounted = true;
 
     (async () => {
-      const { data } = await supabase.auth.getSession();
-      if (!mounted) return;
+      try {
+        const { data } = await supabase.auth.getSession();
+        if (!mounted) return;
 
-      if (data.session) {
-        setAuthed(true);
-        setPlans(getPlans());
+        if (data.session) {
+          setAuthed(true);
+          setPlans(getPlans());
 
-        try {
-          const r = await fetchRecipesFromSupabase();
-          setRecipes(r);
-        } catch (e) {
-          console.error("Kunde inte hämta recept från Supabase:", e);
-          setRecipes([]);
+          try {
+            const r = await fetchRecipesFromSupabase();
+            setRecipes(r);
+          } catch (e) {
+            console.error("Kunde inte hämta recept från Supabase:", e);
+            setRecipes([]);
+          }
+        } else {
+          setAuthed(false);
         }
-      } else {
+      } catch (e) {
+        console.error("Init auth/session failed:", e);
         setAuthed(false);
       }
     })();
@@ -109,6 +114,31 @@ const App: React.FC = () => {
       sub.subscription.unsubscribe();
     };
   }, []);
+
+  // Realtime måste ligga här (före ev. early return), annars bryter du hook-ordningen.
+  useEffect(() => {
+    if (!authed) return;
+
+    const channel = supabase
+      .channel("recipes-sync")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "recipes" },
+        async () => {
+          try {
+            const r = await fetchRecipesFromSupabase();
+            setRecipes(r);
+          } catch (e) {
+            console.error("Realtime reload misslyckades:", e);
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [authed]);
 
   if (!authed) {
     return (
@@ -133,16 +163,13 @@ const App: React.FC = () => {
   }
 
   const handleUpdateRecipes = async (newRecipes: Recipe[]) => {
-    // Optimistisk uppdatering i UI
     setRecipes(newRecipes);
 
-    // Spara till Supabase
     try {
       await saveRecipesToSupabase(newRecipes);
     } catch (e) {
       console.error("Kunde inte spara recept till Supabase:", e);
 
-      // Återladda från Supabase vid fel, så vi inte hamnar i konstigt läge
       try {
         const r = await fetchRecipesFromSupabase();
         setRecipes(r);
@@ -156,31 +183,6 @@ const App: React.FC = () => {
     setPlans(newPlans);
     savePlans(newPlans);
   };
-
-  // Realtime: om någon ändrar recept / senast lagad på annan enhet → uppdatera här
-  useEffect(() => {
-    if (!authed) return;
-
-    const channel = supabase
-      .channel("recipes-sync")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "recipes" },
-        async () => {
-          try {
-            const r = await fetchRecipesFromSupabase();
-            setRecipes(r);
-          } catch (e) {
-            console.error("Realtime reload misslyckades:", e);
-          }
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [authed]);
 
   return (
     <HashRouter>
