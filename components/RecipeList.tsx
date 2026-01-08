@@ -26,21 +26,24 @@ const RecipeList: React.FC<RecipeListProps> = ({ recipes, onUpdateRecipes }) => 
   });
 
   const handleAdd = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newName.trim()) return;
-    const newRecipe: Recipe = {
-      id: Date.now(),
-      name: newName,
-      source: newSource || null,
-      category: newCategory,
-      hasRecipeContent: false,
-      lastCooked: null
-    };
-    onUpdateRecipes([...recipes, newRecipe]);
-    resetForm();
-    setIsAdding(false);
+  e.preventDefault();
+  if (!newName.trim()) return;
+
+  const nextId = recipes.length > 0 ? Math.max(...recipes.map(r => r.id)) + 1 : 1;
+
+  const newRecipe: Recipe = {
+    id: nextId,
+    name: newName,
+    source: newSource || null,
+    category: newCategory,
+    hasRecipeContent: false,
+    lastCooked: null
   };
 
+  onUpdateRecipes([...recipes, newRecipe]);
+  resetForm();
+  setIsAdding(false);
+};
   const handleUpdate = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newName.trim() || editingId === null) return;
