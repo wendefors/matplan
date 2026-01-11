@@ -48,8 +48,7 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
         : ALL_DAYS;
 
     setActiveDayIndices(fromPlan);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedWeek]);
+  }, [selectedWeek, currentPlan.activeDayIndices]);
 
   // Hjälpare: spara aktuell veckas activeDayIndices in i plans
   const persistActiveDaysForWeek = (newActive: number[]) => {
@@ -107,17 +106,23 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
   };
 
   /**
-   * Smart weighted random picker
+   * Smart weighted random picker (utan alfabet-bias)
+   * - Högre score => större sannolikhet
+   * - Alla kandidater kan vinna ibland
    */
   const pickSmartRecipe = (excludeIds: Set<number>, excludeCategories: Set<string>) => {
     if (recipes.length === 0) return null;
 
-    const candidates = recipes.map((r) => {
+    const scored = recipes.map((r) => {
       let score = 100;
 
+      // Penalty för redan vald i veckan
       if (excludeIds.has(r.id)) score -= 95;
+
+      // Penalty för redan använd kategori i veckan
       if (excludeCategories.has(r.category)) score -= 80;
 
+      // Freshness bonus
       if (!r.lastCooked) {
         score += 20;
       } else {
@@ -128,12 +133,23 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
         score += Math.min(diffDays, 30);
       }
 
+      // Se till att vi aldrig får 0 eller negativt
       return { recipe: r, score: Math.max(score, 1) };
     });
 
-    candidates.sort((a, b) => b.score - a.score);
-    const topCandidates = candidates.slice(0, Math.max(1, Math.floor(candidates.length * 0.2)));
-    return topCandidates[Math.floor(Math.random() * topCandidates.length)].recipe;
+    // Bryt ties så vi inte får alfabet-ordning när många har samma score
+    scored.sort(() => Math.random() - 0.5);
+
+    // Viktad slump: välj proportionellt mot score
+    const total = scored.reduce((sum, x) => sum + x.score, 0);
+    let roll = Math.random() * total;
+
+    for (const x of scored) {
+      roll -= x.score;
+      if (roll <= 0) return x.recipe;
+    }
+
+    return scored[scored.length - 1].recipe;
   };
 
   const randomizeAll = () => {
@@ -160,30 +176,56 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
     ]);
   };
 
+  // Slumpa EN dag men respektera övriga val i veckan (undvik dubbletter + samma kategori)
   const randomizeDay = (dayId: number) => {
-    const selected = pickSmartRecipe(new Set(), new Set());
+    const usedIds = new Set<number>();
+    const usedCategories = new Set<string>();
+
+    // vilka recept/kategorier är redan använda i veckan?
+    currentPlan.days.forEach((d) => {
+      if (d.recipeId != null) {
+        usedIds.add(d.recipeId);
+        const r = recipes.find((x) => x.id === d.recipeId);
+        if (r) usedCategories.add(r.category);
+      }
+    });
+
+    // låt den få ersätta just den här dagen
+    const existing = currentPlan.days.find((d) => d.dayId === dayId)?.recipeId;
+    if (existing != null) {
+      usedIds.delete(existing);
+      const rr = recipes.find((x) => x.id === existing);
+      if (rr) usedCategories.delete(rr.category);
+    }
+
+    const selected = pickSmartRecipe(usedIds, usedCategories);
     if (selected) updateDayRecipe(dayId, selected.id);
   };
 
   const handleExport = () => {
-    const activePlans = (currentPlan.days ?? []).filter(
+    const activePlans = currentPlan.days.filter(
       (d) => activeDayIndices.includes(d.dayId) && d.recipeId !== null
     );
+
     if (activePlans.length === 0) return;
 
-    // 1) Exportera kalenderfil
+    // 1. Exportera kalenderfilen
     generateICS(selectedWeek, activePlans, recipes);
 
-    // 2) Sätt "Senast lagad" = idag på recepten som ingår i exporten
-    const todayIso = new Date().toISOString().slice(0, 10);
+    // 2. Sätt "Senast lagad" = idag (YYYY-MM-DD)
+    const todayIsoDate = new Date().toISOString().slice(0, 10);
+
     const recipeIdsInExport = new Set<number>(
-      activePlans.map((p) => p.recipeId!).filter((id): id is number => id !== null)
+      activePlans
+        .map((p) => p.recipeId)
+        .filter((id): id is number => id !== null)
     );
 
     const updatedRecipes = recipes.map((r) =>
-      recipeIdsInExport.has(r.id) ? { ...r, lastCooked: todayIso } : r
+      recipeIdsInExport.has(r.id) ? { ...r, lastCooked: todayIsoDate } : r
     );
 
+    // Detta går hela vägen till App.tsx → Supabase
     onUpdateRecipes(updatedRecipes);
   };
 
