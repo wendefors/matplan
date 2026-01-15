@@ -14,30 +14,17 @@ type DbRecipe = {
   source: string | null;
   has_recipe_content: boolean;
   category: string | null;
-  last_cooked: string | null;
+  last_cooked: string | null; // timestamp/text från Supabase
 };
 
-type DbWeekPlan = {
-  id: string;
-  user_id: string;
-  week_identifier: string;
-  days: any; // jsonb
-  active_day_indices: number[] | null;
-};
-
-const NavLink: React.FC<{ to: string; children: React.ReactNode }> = ({
-  to,
-  children,
-}) => {
+const NavLink: React.FC<{ to: string; children: React.ReactNode }> = ({ to, children }) => {
   const location = useLocation();
   const isActive = location.pathname === to;
   return (
     <Link
       to={to}
       className={`flex-1 text-center py-4 text-sm font-semibold transition-colors ${
-        isActive
-          ? "text-emerald-600 border-t-2 border-emerald-600"
-          : "text-gray-500 hover:text-gray-800"
+        isActive ? "text-emerald-600 border-t-2 border-emerald-600" : "text-gray-500 hover:text-gray-800"
       }`}
     >
       {children}
@@ -45,138 +32,53 @@ const NavLink: React.FC<{ to: string; children: React.ReactNode }> = ({
   );
 };
 
-async function requireUserId(): Promise<string> {
-  const {
-    data: { user },
-    error,
-  } = await supabase.auth.getUser();
-
+async function getCurrentUserId(): Promise<string> {
+  const { data, error } = await supabase.auth.getUser();
   if (error) throw error;
-  if (!user) throw new Error("Not authenticated");
-  return user.id;
-}
-
-function toDbRecipePayload(userId: string, r: Recipe) {
-  return {
-    id: r.id,
-    user_id: userId,
-    name: r.name,
-    source: r.source || null,
-    has_recipe_content: r.hasRecipeContent,
-    category: r.category || null,
-    last_cooked: r.lastCooked, // <-- VIKTIGT: detta ska sparas
-  };
-}
-
-function fromDbRecipeRow(r: DbRecipe): Recipe {
-  return {
-    id: r.id,
-    name: r.name ?? "",
-    source: r.source ?? "",
-    hasRecipeContent: !!r.has_recipe_content,
-    category: r.category ?? "Annat",
-    lastCooked: r.last_cooked,
-  };
+  const userId = data.user?.id;
+  if (!userId) throw new Error("No user in session");
+  return userId;
 }
 
 async function fetchRecipesFromSupabase(): Promise<Recipe[]> {
-  const userId = await requireUserId();
-
   const { data, error } = await supabase
     .from("recipes")
     .select("id,user_id,name,source,has_recipe_content,category,last_cooked")
-    .eq("user_id", userId)
     .order("name", { ascending: true });
 
   if (error) throw error;
 
-  return ((data ?? []) as DbRecipe[]).map(fromDbRecipeRow);
-}
-
-/**
- * Sparar (upsert) receptlistan för nuvarande användare.
- * - onConflict: "id" eftersom din tabell visar att id är PK.
- * - user_id skickas alltid med så att RLS/NOT NULL blir nöjda.
- */
-async function saveRecipesToSupabase(nextRecipes: Recipe[]): Promise<void> {
-  const userId = await requireUserId();
-
-  const payload = nextRecipes.map((r) => toDbRecipePayload(userId, r));
-
-  const { error } = await supabase
-    .from("recipes")
-    .upsert(payload, { onConflict: "id" });
-
-  if (error) throw error;
-}
-
-/**
- * Tar bort ett recept (för nuvarande användare).
- * Detta används om du i UI tar bort en rätt och vill att den även försvinner i Supabase.
- */
-async function deleteRecipeFromSupabase(recipeId: number): Promise<void> {
-  const userId = await requireUserId();
-
-  const { error } = await supabase
-    .from("recipes")
-    .delete()
-    .eq("user_id", userId)
-    .eq("id", recipeId);
-
-  if (error) throw error;
-}
-
-/**
- * Week plans i Supabase (om du har detta igång).
- * Om du fortfarande kör week plans lokalt kan du lämna dessa som “no-op”.
- */
-function normalizeWeekPlans(plans: WeekPlan[]): WeekPlan[] {
-  return [...plans].sort((a, b) => a.weekIdentifier.localeCompare(b.weekIdentifier));
-}
-
-function normalizeActiveDays(active?: number[] | null): number[] {
-  if (!active || active.length === 0) return [0, 1, 2, 3, 4, 5, 6];
-  return Array.from(new Set(active))
-    .filter((n) => n >= 0 && n <= 6)
-    .sort((a, b) => a - b);
-}
-
-async function fetchWeekPlansFromSupabase(): Promise<WeekPlan[]> {
-  const userId = await requireUserId();
-
-  const { data, error } = await supabase
-    .from("week_plans")
-    .select("id,user_id,week_identifier,days,active_day_indices")
-    .eq("user_id", userId)
-    .order("week_identifier", { ascending: true });
-
-  if (error) throw error;
-
-  const rows = (data ?? []) as DbWeekPlan[];
-
-  const mapped: WeekPlan[] = rows.map((r) => ({
-    weekIdentifier: r.week_identifier,
-    days: Array.isArray(r.days) ? r.days : [],
-    activeDayIndices: normalizeActiveDays(r.active_day_indices),
+  return ((data ?? []) as DbRecipe[]).map((r) => ({
+    id: r.id,
+    name: r.name,
+    source: r.source ?? "",
+    hasRecipeContent: r.has_recipe_content,
+    category: r.category ?? "Annat",
+    lastCooked: r.last_cooked,
   }));
-
-  return normalizeWeekPlans(mapped);
 }
 
-async function saveWeekPlansToSupabase(nextPlans: WeekPlan[]): Promise<void> {
-  const userId = await requireUserId();
+async function saveRecipesToSupabase(recipes: Recipe[]): Promise<void> {
+  const userId = await getCurrentUserId();
 
-  const payload = nextPlans.map((p) => ({
+  const payload = recipes.map((r) => ({
     user_id: userId,
-    week_identifier: p.weekIdentifier,
-    days: p.days ?? [],
-    active_day_indices: normalizeActiveDays(p.activeDayIndices),
+    id: r.id,
+    name: r.name,
+    source: r.source || null,
+    has_recipe_content: r.hasRecipeContent,
+    category: r.category || null,
+    last_cooked: r.lastCooked ?? null,
   }));
 
-  const { error } = await supabase
-    .from("week_plans")
-    .upsert(payload, { onConflict: "user_id,week_identifier" });
+  const { error } = await supabase.from("recipes").upsert(payload, { onConflict: "id" });
+  if (error) throw error;
+}
 
+async function deleteRecipeFromSupabase(id: number): Promise<void> {
+  const userId = await getCurrentUserId();
+
+  const { error } = await supabase.from("recipes").delete().eq("user_id", userId).eq("id", id);
   if (error) throw error;
 }
 
@@ -184,46 +86,43 @@ const App: React.FC = () => {
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [plans, setPlans] = useState<WeekPlan[]>([]);
   const [authed, setAuthed] = useState(false);
+  const [bootstrapped, setBootstrapped] = useState(false);
 
+  // AUTH + INITIAL LOAD (kör alltid, oavsett authed-state)
   useEffect(() => {
     let mounted = true;
 
     (async () => {
-      const { data, error } = await supabase.auth.getSession();
-      if (error) {
-        console.error("getSession failed:", error);
-        return;
-      }
+      try {
+        const { data } = await supabase.auth.getSession();
+        if (!mounted) return;
 
-      if (mounted && data.session) {
-        setAuthed(true);
+        const hasSession = !!data.session;
+        setAuthed(hasSession);
 
-        // Välj EN av dessa två beroende på var du vill ha week plans:
-        // A) week plans lokalt (nuvarande upplägg)
-        // setPlans(getPlans());
+        if (hasSession) {
+          setPlans(getPlans());
 
-        // B) week plans i Supabase
-        try {
-          const p = await fetchWeekPlansFromSupabase();
-          setPlans(p);
-        } catch (e) {
-          console.error("Kunde inte hämta week plans från Supabase:", e);
-          setPlans(getPlans()); // fallback
+          try {
+            const r = await fetchRecipesFromSupabase();
+            setRecipes(r);
+          } catch (e) {
+            console.error("Kunde inte hämta recept från Supabase:", e);
+            setRecipes([]);
+          }
         }
-
-        // Recept från Supabase
-        try {
-          const r = await fetchRecipesFromSupabase();
-          setRecipes(r);
-        } catch (e) {
-          console.error("Kunde inte hämta recept från Supabase:", e);
-          setRecipes([]);
-        }
+      } catch (e) {
+        console.error("Init error:", e);
+        if (mounted) setAuthed(false);
+      } finally {
+        if (mounted) setBootstrapped(true);
       }
     })();
 
     const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
       setAuthed(!!session);
+      // Vi sätter bootstrapped=true även om auth ändras tidigt
+      setBootstrapped(true);
     });
 
     return () => {
@@ -232,26 +131,39 @@ const App: React.FC = () => {
     };
   }, []);
 
+  // Realtime sync (hooken finns alltid, men gör inget om authed=false)
+  useEffect(() => {
+    if (!authed) return;
+
+    const channel = supabase
+      .channel("recipes-sync")
+      .on("postgres_changes", { event: "*", schema: "public", table: "recipes" }, async () => {
+        try {
+          const r = await fetchRecipesFromSupabase();
+          setRecipes(r);
+        } catch (e) {
+          console.error("Realtime reload misslyckades:", e);
+        }
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [authed]);
+
+  // Visa inget förrän vi vet om vi har session eller inte (minskar “blink”)
+  if (!bootstrapped) {
+    return null;
+  }
+
   if (!authed) {
     return (
       <Login
         onSuccess={async () => {
           setAuthed(true);
+          setPlans(getPlans());
 
-          // Välj EN av dessa två beroende på var du vill ha week plans:
-          // A) lokalt
-          // setPlans(getPlans());
-
-          // B) Supabase
-          try {
-            const p = await fetchWeekPlansFromSupabase();
-            setPlans(p);
-          } catch (e) {
-            console.error("Kunde inte hämta week plans från Supabase:", e);
-            setPlans(getPlans()); // fallback
-          }
-
-          // Recept från Supabase
           try {
             const r = await fetchRecipesFromSupabase();
             setRecipes(r);
@@ -264,17 +176,16 @@ const App: React.FC = () => {
     );
   }
 
-  const handleUpdateRecipes = async (nextRecipes: Recipe[]) => {
-    // Optimistisk UI
-    setRecipes(nextRecipes);
+  const handleUpdateRecipes = async (newRecipes: Recipe[]) => {
+    // Optimistiskt i UI
+    setRecipes(newRecipes);
 
     try {
-      // Spara till Supabase (inkl user_id + last_cooked)
-      await saveRecipesToSupabase(nextRecipes);
+      await saveRecipesToSupabase(newRecipes);
     } catch (e) {
-      console.error("SAVE FAILED (recipes):", e);
+      console.error("SAVE FAILED:", e);
 
-      // Återställ från servern så UI inte ljuger
+      // Reload från Supabase så UI inte “ljuger”
       try {
         const r = await fetchRecipesFromSupabase();
         setRecipes(r);
@@ -284,106 +195,34 @@ const App: React.FC = () => {
     }
   };
 
-  const handleDeleteRecipe = async (recipeId: number) => {
-    // Optimistisk UI
-    const next = recipes.filter((r) => r.id !== recipeId);
-    setRecipes(next);
+  const handleDeleteRecipe = async (id: number) => {
+    // Optimistiskt i UI
+    setRecipes((prev) => prev.filter((r) => r.id !== id));
 
     try {
-      await deleteRecipeFromSupabase(recipeId);
+      await deleteRecipeFromSupabase(id);
     } catch (e) {
-      console.error("DELETE FAILED (recipes):", e);
+      console.error("DELETE FAILED:", e);
+      alert("Kunde inte ta bort recept – se Console.");
 
-      // Återställ från servern
+      // Reload för att återställa
       try {
         const r = await fetchRecipesFromSupabase();
         setRecipes(r);
-      } catch (e2) {
-        console.error("Kunde inte återladda recept från Supabase:", e2);
-      }
+      } catch {}
     }
   };
 
-  const handleUpdatePlans = async (nextPlans: WeekPlan[]) => {
-    setPlans(nextPlans);
-
-    // Välj EN av dessa två beroende på var du vill ha week plans:
-    // A) lokalt (nuvarande upplägg)
-    // savePlans(nextPlans);
-
-    // B) Supabase
-    try {
-      await saveWeekPlansToSupabase(nextPlans);
-    } catch (e) {
-      console.error("SAVE FAILED (week_plans):", e);
-
-      // Fallback: försök läsa om
-      try {
-        const p = await fetchWeekPlansFromSupabase();
-        setPlans(p);
-      } catch (e2) {
-        console.error("Kunde inte återladda week plans från Supabase:", e2);
-      }
-    }
+  const handleUpdatePlans = (newPlans: WeekPlan[]) => {
+    setPlans(newPlans);
+    savePlans(newPlans);
   };
-
-  // Realtime: recept
-  useEffect(() => {
-    if (!authed) return;
-
-    const channel = supabase
-      .channel("recipes-sync")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "recipes" },
-        async () => {
-          try {
-            const r = await fetchRecipesFromSupabase();
-            setRecipes(r);
-          } catch (e) {
-            console.error("Realtime reload misslyckades (recipes):", e);
-          }
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [authed]);
-
-  // Realtime: week_plans (om du kör week plans i Supabase)
-  useEffect(() => {
-    if (!authed) return;
-
-    const channel = supabase
-      .channel("weekplans-sync")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "week_plans" },
-        async () => {
-          try {
-            const p = await fetchWeekPlansFromSupabase();
-            setPlans(p);
-          } catch (e) {
-            console.error("Realtime reload misslyckades (week_plans):", e);
-          }
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [authed]);
 
   return (
     <HashRouter>
       <div className="min-h-screen flex flex-col max-w-lg mx-auto bg-white shadow-xl relative pb-20 md:pb-0">
         <header className="px-6 pt-8 pb-4 bg-white sticky top-0 z-10 border-b border-gray-100">
-          <h1 className="text-2xl font-bold text-gray-900 tracking-tight">
-            Matplaneraren
-          </h1>
+          <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Matplaneraren</h1>
           <p className="text-sm text-gray-500">Planera smart, ät gott.</p>
         </header>
 
@@ -392,24 +231,12 @@ const App: React.FC = () => {
             <Route
               path="/"
               element={
-                <MealPlanner
-                  recipes={recipes}
-                  plans={plans}
-                  onUpdatePlans={handleUpdatePlans}
-                  onUpdateRecipes={handleUpdateRecipes}
-                />
+                <MealPlanner recipes={recipes} plans={plans} onUpdatePlans={handleUpdatePlans} onUpdateRecipes={handleUpdateRecipes} />
               }
             />
             <Route
               path="/recipes"
-              element={
-                <RecipeList
-                  recipes={recipes}
-                  onUpdateRecipes={handleUpdateRecipes}
-                  // Om du har en separat delete-callback i RecipeList kan du skicka den här:
-                  // onDeleteRecipe={handleDeleteRecipe}
-                />
-              }
+              element={<RecipeList recipes={recipes} onUpdateRecipes={handleUpdateRecipes} onDeleteRecipe={handleDeleteRecipe} />}
             />
           </Routes>
         </main>
@@ -417,13 +244,7 @@ const App: React.FC = () => {
         <nav className="fixed bottom-0 left-0 right-0 max-w-lg mx-auto bg-white border-t border-gray-100 flex shadow-2xl z-20">
           <NavLink to="/">
             <div className="flex flex-col items-center gap-1">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                className="h-6 w-6"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path
                   strokeLinecap="round"
                   strokeLinejoin="round"
@@ -437,13 +258,7 @@ const App: React.FC = () => {
 
           <NavLink to="/recipes">
             <div className="flex flex-col items-center gap-1">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                className="h-6 w-6"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path
                   strokeLinecap="round"
                   strokeLinejoin="round"
