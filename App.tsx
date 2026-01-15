@@ -17,11 +17,11 @@ type DbRecipe = {
 };
 
 type DbWeekPlan = {
-  id: string;
   user_id: string;
   week_identifier: string;
   days: any; // jsonb
-  active_day_indices: any; // jsonb/array
+  active_day_indices: any; // jsonb
+  updated_at?: string; // timestamptz (valfritt)
 };
 
 const NavLink: React.FC<{ to: string; children: React.ReactNode }> = ({
@@ -54,6 +54,8 @@ async function getCurrentUserId(): Promise<string> {
   if (!user) throw new Error("Not authenticated");
   return user.id;
 }
+
+// -------------------- Recipes --------------------
 
 async function fetchRecipesFromSupabase(): Promise<Recipe[]> {
   const userId = await getCurrentUserId();
@@ -108,6 +110,8 @@ async function deleteRecipeFromSupabase(recipeId: number): Promise<void> {
   if (error) throw error;
 }
 
+// -------------------- Week plans --------------------
+
 const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
 
 function normalizeActiveDays(v: any): number[] {
@@ -129,9 +133,11 @@ function toWeekPlans(rows: DbWeekPlan[]): WeekPlan[] {
 async function fetchWeekPlansFromSupabase(): Promise<WeekPlan[]> {
   const userId = await getCurrentUserId();
 
+  // OBS: Din tabell har INTE kolumnen "id" (se din screenshot),
+  // så vi selectar bara de kolumner som faktiskt finns.
   const { data, error } = await supabase
     .from("week_plans")
-    .select("id,user_id,week_identifier,days,active_day_indices")
+    .select("user_id,week_identifier,days,active_day_indices,updated_at")
     .eq("user_id", userId)
     .order("week_identifier", { ascending: true });
 
@@ -150,12 +156,15 @@ async function saveWeekPlansToSupabase(plans: WeekPlan[]): Promise<void> {
     active_day_indices: p.activeDayIndices ?? ALL_DAYS,
   }));
 
+  // Denna kräver att du har en UNIQUE constraint på (user_id, week_identifier)
   const { error } = await supabase
     .from("week_plans")
     .upsert(payload, { onConflict: "user_id,week_identifier" });
 
   if (error) throw error;
 }
+
+// -------------------- App --------------------
 
 const App: React.FC = () => {
   const [recipes, setRecipes] = useState<Recipe[]>([]);
@@ -300,7 +309,6 @@ const App: React.FC = () => {
   };
 
   const handleDeleteRecipe = async (id: number) => {
-    // Optimistiskt i UI
     setRecipes((prev) => prev.filter((r) => r.id !== id));
 
     try {
@@ -367,8 +375,45 @@ const App: React.FC = () => {
         </main>
 
         <nav className="fixed bottom-0 left-0 right-0 max-w-lg mx-auto bg-white border-t border-gray-100 flex shadow-2xl z-20">
-          <NavLink to="/">Planering</NavLink>
-          <NavLink to="/recipes">Mina rätter</NavLink>
+          <NavLink to="/">
+            <div className="flex flex-col items-center gap-1">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                className="h-6 w-6"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
+                />
+              </svg>
+              Planering
+            </div>
+          </NavLink>
+
+          <NavLink to="/recipes">
+            <div className="flex flex-col items-center gap-1">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                className="h-6 w-6"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"
+                />
+              </svg>
+              Mina rätter
+            </div>
+          </NavLink>
         </nav>
       </div>
     </HashRouter>
