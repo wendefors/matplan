@@ -48,7 +48,8 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
         : ALL_DAYS;
 
     setActiveDayIndices(fromPlan);
-  }, [selectedWeek, currentPlan.activeDayIndices]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedWeek]);
 
   // Hjälpare: spara aktuell veckas activeDayIndices in i plans
   const persistActiveDaysForWeek = (newActive: number[]) => {
@@ -106,23 +107,17 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
   };
 
   /**
-   * Smart weighted random picker (utan alfabet-bias)
-   * - Högre score => större sannolikhet
-   * - Alla kandidater kan vinna ibland
+   * Smart weighted random picker
    */
   const pickSmartRecipe = (excludeIds: Set<number>, excludeCategories: Set<string>) => {
     if (recipes.length === 0) return null;
 
-    const scored = recipes.map((r) => {
+    const candidates = recipes.map((r) => {
       let score = 100;
 
-      // Penalty för redan vald i veckan
       if (excludeIds.has(r.id)) score -= 95;
-
-      // Penalty för redan använd kategori i veckan
       if (excludeCategories.has(r.category)) score -= 80;
 
-      // Freshness bonus
       if (!r.lastCooked) {
         score += 20;
       } else {
@@ -133,31 +128,44 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
         score += Math.min(diffDays, 30);
       }
 
-      // Se till att vi aldrig får 0 eller negativt
       return { recipe: r, score: Math.max(score, 1) };
     });
 
-    // Bryt ties så vi inte får alfabet-ordning när många har samma score
-    scored.sort(() => Math.random() - 0.5);
+    candidates.sort((a, b) => b.score - a.score);
 
-    // Viktad slump: välj proportionellt mot score
-    const total = scored.reduce((sum, x) => sum + x.score, 0);
-    let roll = Math.random() * total;
+    // Ta top 20% (minst 1) så det känns "smart" men inte förutsägbart
+    const topCandidates = candidates.slice(0, Math.max(1, Math.floor(candidates.length * 0.2)));
+    return topCandidates[Math.floor(Math.random() * topCandidates.length)].recipe;
+  };
 
-    for (const x of scored) {
-      roll -= x.score;
-      if (roll <= 0) return x.recipe;
-    }
+  /**
+   * Bygg veckans "upptagna" recept (för att undvika dubletter i samma vecka)
+   * excludeDayId: om angivet, exkluderas inte receptet som redan ligger på just den dagen
+   */
+  const buildWeekExcludes = (excludeDayId?: number) => {
+    const usedIds = new Set<number>();
+    const usedCategories = new Set<string>();
 
-    return scored[scored.length - 1].recipe;
+    currentPlan.days.forEach((d) => {
+      if (excludeDayId !== undefined && d.dayId === excludeDayId) return;
+      if (d.recipeId == null) return;
+
+      usedIds.add(d.recipeId);
+
+      const r = recipes.find((x) => x.id === d.recipeId);
+      if (r) usedCategories.add(r.category);
+    });
+
+    return { usedIds, usedCategories };
   };
 
   const randomizeAll = () => {
     if (recipes.length === 0) return;
 
-    const usedIds = new Set<number>();
-    const usedCategories = new Set<string>();
+    // 1) Starta med alla recept som redan ligger på INAKTIVA dagar (så vi inte dubblar dem)
+    const { usedIds, usedCategories } = buildWeekExcludes();
 
+    // 2) Vi ska sätta nya val för alla AKTIVA dagar
     const newDayPlans: DayPlan[] = activeDayIndices.map((dayId) => {
       const selected = pickSmartRecipe(usedIds, usedCategories);
       if (selected) {
@@ -168,35 +176,25 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
       return { dayId, recipeId: null };
     });
 
+    // 3) Behåll övriga dagar som inte är aktiva (om de finns i planen)
+    const existingOtherDays = currentPlan.days.filter((d) => !activeDayIndices.includes(d.dayId));
+
+    const mergedDays = [
+      ...existingOtherDays,
+      ...newDayPlans,
+    ].sort((a, b) => a.dayId - b.dayId);
+
     const otherPlans = plans.filter((p) => p.weekIdentifier !== selectedWeek);
 
     onUpdatePlans([
       ...otherPlans,
-      { weekIdentifier: selectedWeek, days: newDayPlans, activeDayIndices },
+      { weekIdentifier: selectedWeek, days: mergedDays, activeDayIndices },
     ]);
   };
 
-  // Slumpa EN dag men respektera övriga val i veckan (undvik dubbletter + samma kategori)
   const randomizeDay = (dayId: number) => {
-    const usedIds = new Set<number>();
-    const usedCategories = new Set<string>();
-
-    // vilka recept/kategorier är redan använda i veckan?
-    currentPlan.days.forEach((d) => {
-      if (d.recipeId != null) {
-        usedIds.add(d.recipeId);
-        const r = recipes.find((x) => x.id === d.recipeId);
-        if (r) usedCategories.add(r.category);
-      }
-    });
-
-    // låt den få ersätta just den här dagen
-    const existing = currentPlan.days.find((d) => d.dayId === dayId)?.recipeId;
-    if (existing != null) {
-      usedIds.delete(existing);
-      const rr = recipes.find((x) => x.id === existing);
-      if (rr) usedCategories.delete(rr.category);
-    }
+    // Bygg exkludering för HELA veckan, men tillåt att vi byter just denna dag
+    const { usedIds, usedCategories } = buildWeekExcludes(dayId);
 
     const selected = pickSmartRecipe(usedIds, usedCategories);
     if (selected) updateDayRecipe(dayId, selected.id);
@@ -282,8 +280,19 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
           className="flex-none bg-gray-900 text-white p-4 rounded-2xl shadow-lg shadow-gray-200 active:scale-95 transition-transform"
           title="Exportera till kalender"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            className="h-6 w-6"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"
+            />
           </svg>
         </button>
       </div>
@@ -308,17 +317,41 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
                     <button
                       onClick={() => randomizeDay(dayIdx)}
                       className="p-1.5 text-gray-400 hover:text-emerald-500 bg-gray-50 rounded-lg transition-colors"
+                      title="Slumpa om denna dag"
                     >
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        className="h-5 w-5"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                        />
                       </svg>
                     </button>
                     <button
                       onClick={() => setShowRecipeModal(dayIdx)}
                       className="p-1.5 text-gray-400 hover:text-emerald-500 bg-gray-50 rounded-lg transition-colors"
+                      title="Välj rätt manuellt"
                     >
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        className="h-5 w-5"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+                        />
                       </svg>
                     </button>
                   </div>
@@ -326,12 +359,16 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
 
                 {recipe ? (
                   <div>
-                    <h3 className="text-lg font-bold text-gray-900 leading-tight mb-1">{recipe.name}</h3>
+                    <h3 className="text-lg font-bold text-gray-900 leading-tight mb-1">
+                      {recipe.name}
+                    </h3>
                     <div className="flex flex-wrap gap-2 items-center">
                       <span className="text-[10px] bg-emerald-50 text-emerald-600 px-1.5 py-0.5 rounded font-bold uppercase tracking-tighter">
                         {recipe.category}
                       </span>
-                      <span className="text-[10px] text-gray-400">Lagad: {formatDate(recipe.lastCooked)}</span>
+                      <span className="text-[10px] text-gray-400">
+                        Lagad: {formatDate(recipe.lastCooked)}
+                      </span>
                     </div>
                   </div>
                 ) : (
@@ -353,12 +390,22 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
           <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden max-h-[80vh] flex flex-col">
             <div className="p-6 border-b border-gray-100 flex justify-between items-center">
               <h3 className="text-xl font-bold">Välj en rätt</h3>
-              <button onClick={() => setShowRecipeModal(null)} className="text-gray-400 hover:text-gray-600">
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <button
+                onClick={() => setShowRecipeModal(null)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="h-6 w-6"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
             </div>
+
             <div className="overflow-y-auto p-4 space-y-2">
               <button
                 onClick={() => updateDayRecipe(showRecipeModal, null)}
@@ -366,6 +413,7 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
               >
                 Rensa vald rätt
               </button>
+
               {recipes.map((r) => (
                 <button
                   key={r.id}
