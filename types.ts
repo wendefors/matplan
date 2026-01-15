@@ -15,6 +15,7 @@ export const RECIPE_CATEGORIES = [
   "Kyckling",
   "Pasta",
   "Soppa",
+  "Helg",
   "Annat",
 ] as const;
 
