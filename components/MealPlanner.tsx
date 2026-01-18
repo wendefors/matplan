@@ -7,6 +7,9 @@ interface MealPlannerProps {
   plans: WeekPlan[];
   onUpdatePlans: (plans: WeekPlan[]) => void;
   onUpdateRecipes: (recipes: Recipe[]) => void;
+
+  // NY: liten, iOS-talig uppdatering av last_cooked
+  onMarkCooked: (recipeIds: number[], isoDate: string) => Promise<void>;
 }
 
 const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
@@ -16,6 +19,7 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
   plans,
   onUpdatePlans,
   onUpdateRecipes,
+  onMarkCooked,
 }) => {
   const [selectedWeek, setSelectedWeek] = useState(() => {
     const now = new Date();
@@ -183,7 +187,10 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
 
     const otherPlans = plans.filter((p) => p.weekIdentifier !== selectedWeek);
 
-    onUpdatePlans([...otherPlans, { weekIdentifier: selectedWeek, days: mergedDays, activeDayIndices }]);
+    onUpdatePlans([
+      ...otherPlans,
+      { weekIdentifier: selectedWeek, days: mergedDays, activeDayIndices },
+    ]);
   };
 
   const randomizeDay = (dayId: number) => {
@@ -201,29 +208,23 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
 
     if (activePlans.length === 0) return;
 
-    // A) Sätt "Senast lagad" = idag och spara först (så iOS inte kan stoppa sparningen)
+    // Recept-ID:n som ingår i exporten
+    const recipeIdsInExport = activePlans
+      .map((p) => p.recipeId)
+      .filter((id): id is number => id !== null);
+
+    // Sätt "Senast lagad" = idag (YYYY-MM-DD)
     const todayIsoDate = new Date().toISOString().slice(0, 10);
 
-    const recipeIdsInExport = new Set<number>(
-      activePlans
-        .map((p) => p.recipeId)
-        .filter((id): id is number => id !== null)
-    );
+    // Viktigt för iOS:
+    // - Starta Supabase-uppdateringen först (utan await), så requesten hinner skickas
+    // - Sedan triggar vi ICS-exporten (som på iOS kan “störa” JS/requests)
+    onMarkCooked(recipeIdsInExport, todayIsoDate).catch((e) => {
+      console.error("Kunde inte uppdatera Senast lagad:", e);
+    });
 
-    const updatedRecipes = recipes.map((r) =>
-      recipeIdsInExport.has(r.id) ? { ...r, lastCooked: todayIsoDate } : r
-    );
-
-    // Detta går hela vägen till App.tsx → Supabase
-    onUpdateRecipes(updatedRecipes);
-
-    // B) Försök exportera kalenderfilen (iOS kan strula med download/Blob)
-    try {
-      generateICS(selectedWeek, activePlans, recipes);
-    } catch (e) {
-      console.error("ICS-export misslyckades:", e);
-      alert("Kalenderexporten misslyckades på denna enhet, men 'Senast lagad' har sparats.");
-    }
+    // Exportera kalenderfilen
+    generateICS(selectedWeek, activePlans, recipes);
   };
 
   const formatDate = (isoString?: string | null) => {
@@ -279,8 +280,19 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
           className="flex-none bg-gray-900 text-white p-4 rounded-2xl shadow-lg shadow-gray-200 active:scale-95 transition-transform"
           title="Exportera till kalender"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            className="h-6 w-6"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"
+            />
           </svg>
         </button>
       </div>
@@ -307,8 +319,19 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
                       className="p-1.5 text-gray-400 hover:text-emerald-500 bg-gray-50 rounded-lg transition-colors"
                       title="Slumpa om denna dag"
                     >
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        className="h-5 w-5"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                        />
                       </svg>
                     </button>
                     <button
@@ -316,8 +339,19 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
                       className="p-1.5 text-gray-400 hover:text-emerald-500 bg-gray-50 rounded-lg transition-colors"
                       title="Välj rätt manuellt"
                     >
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        className="h-5 w-5"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+                        />
                       </svg>
                     </button>
                   </div>
@@ -325,7 +359,9 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
 
                 {recipe ? (
                   <div>
-                    <h3 className="text-lg font-bold text-gray-900 leading-tight mb-1">{recipe.name}</h3>
+                    <h3 className="text-lg font-bold text-gray-900 leading-tight mb-1">
+                      {recipe.name}
+                    </h3>
                     <div className="flex flex-wrap gap-2 items-center">
                       <span className="text-[10px] bg-emerald-50 text-emerald-600 px-1.5 py-0.5 rounded font-bold uppercase tracking-tighter">
                         {recipe.category}
@@ -358,7 +394,13 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
                 onClick={() => setShowRecipeModal(null)}
                 className="text-gray-400 hover:text-gray-600"
               >
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="h-6 w-6"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
