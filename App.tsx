@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { HashRouter, Routes, Route, Link, useLocation } from "react-router-dom";
-import { Recipe, WeekPlan } from "./types";
+import { Recipe, WeekPlan, DayPlan } from "./types";
 import MealPlanner from "./components/MealPlanner";
 import RecipeList from "./components/RecipeList";
 import Login from "./components/Login";
@@ -108,24 +108,30 @@ async function deleteRecipeFromSupabase(id: number): Promise<void> {
 }
 
 /**
- * Minimal uppdatering (PATCH) för just last_cooked.
- * Detta är nyckeln för iOS-stabilitet + keepalive.
+ * FIX: UPDATE last_cooked per recept (inte upsert)
+ * Detta minskar risk för konstiga races + är stabilare mot RLS och iOS.
  */
-async function updateLastCookedInSupabase(
-  recipeIds: number[],
-  isoDate: string
+async function updateLastCookedUpdates(
+  updates: { id: number; lastCooked: string }[]
 ): Promise<void> {
   const userId = await getCurrentUserId();
+  if (updates.length === 0) return;
 
-  if (recipeIds.length === 0) return;
+  // Kör uppdateringar parallellt
+  const results = await Promise.all(
+    updates.map((u) =>
+      supabase
+        .from("recipes")
+        .update({ last_cooked: u.lastCooked })
+        .eq("user_id", userId)
+        .eq("id", u.id)
+    )
+  );
 
-  const { error } = await supabase
-    .from("recipes")
-    .update({ last_cooked: isoDate })
-    .eq("user_id", userId)
-    .in("id", recipeIds);
-
-  if (error) throw error;
+  // Om någon failar, kasta fel så vi hamnar i catch i App
+  for (const r of results) {
+    if (r.error) throw r.error;
+  }
 }
 
 /* ---- Week plans ---- */
@@ -140,10 +146,48 @@ function normalizeActiveDays(v: any): number[] {
   return Array.from(new Set(nums)).sort((a, b) => a - b);
 }
 
+function normalizeDayPlans(v: any): DayPlan[] {
+  if (!Array.isArray(v)) return [];
+
+  const out: DayPlan[] = [];
+
+  for (const raw of v) {
+    const dayId = Number(raw?.dayId);
+    if (!Number.isFinite(dayId) || dayId < 0 || dayId > 6) continue;
+
+    const rawRecipeId = raw?.recipeId;
+    const recipeId =
+      rawRecipeId === null || rawRecipeId === undefined || rawRecipeId === ""
+        ? null
+        : Number(rawRecipeId);
+
+    const freeText =
+      typeof raw?.freeText === "string" ? raw.freeText.trim() : null;
+
+    const hasText = !!(freeText && freeText.length > 0);
+    const hasRecipe = Number.isFinite(recipeId as number);
+
+    // Antingen/eller (stabil form)
+    const normalized: DayPlan = {
+      dayId,
+      recipeId: hasText ? null : hasRecipe ? (recipeId as number) : null,
+      freeText: hasText ? freeText : null,
+    };
+
+    out.push(normalized);
+  }
+
+  // En post per dayId (om dubletter: sista vinner)
+  const byDay = new Map<number, DayPlan>();
+  for (const p of out) byDay.set(p.dayId, p);
+
+  return Array.from(byDay.values()).sort((a, b) => a.dayId - b.dayId);
+}
+
 function toWeekPlans(rows: DbWeekPlan[]): WeekPlan[] {
   return (rows ?? []).map((r) => ({
     weekIdentifier: r.week_identifier,
-    days: Array.isArray(r.days) ? r.days : [],
+    days: normalizeDayPlans(r.days),
     activeDayIndices: normalizeActiveDays(r.active_day_indices),
   }));
 }
@@ -164,7 +208,7 @@ async function saveWeekPlansToSupabase(plans: WeekPlan[]): Promise<void> {
   const payload = plans.map((p) => ({
     user_id: userId,
     week_identifier: p.weekIdentifier,
-    days: p.days ?? [],
+    days: normalizeDayPlans(p.days),
     active_day_indices: p.activeDayIndices ?? ALL_DAYS,
     updated_at: new Date().toISOString(),
   }));
@@ -184,6 +228,21 @@ const App: React.FC = () => {
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [plans, setPlans] = useState<WeekPlan[]>([]);
   const [authed, setAuthed] = useState(false);
+
+  // Guard för att undvika att realtime-reload direkt skriver över våra egna, pågående writes
+  const isWritingRecipesRef = useRef(false);
+
+  const withRecipeWriteGuard = async (fn: () => Promise<void>) => {
+    isWritingRecipesRef.current = true;
+    try {
+      await fn();
+    } finally {
+      // liten delay så realtime-event som triggas av vår write hinner passera
+      setTimeout(() => {
+        isWritingRecipesRef.current = false;
+      }, 350);
+    }
+  };
 
   /* -------- AUTH + INITIAL LOAD -------- */
   useEffect(() => {
@@ -235,6 +294,9 @@ const App: React.FC = () => {
         "postgres_changes",
         { event: "*", schema: "public", table: "recipes" },
         async () => {
+          // 🔴 Om vi själva precis skrivit: hoppa över reload för att undvika blink/race
+          if (isWritingRecipesRef.current) return;
+
           try {
             const r = await fetchRecipesFromSupabase();
             setRecipes(r);
@@ -302,10 +364,13 @@ const App: React.FC = () => {
   /* -------- UPDATE HANDLERS -------- */
 
   const handleUpdateRecipes = async (newRecipes: Recipe[]) => {
+    // Optimistiskt i UI
     setRecipes(newRecipes);
 
     try {
-      await saveRecipesToSupabase(newRecipes);
+      await withRecipeWriteGuard(async () => {
+        await saveRecipesToSupabase(newRecipes);
+      });
     } catch (e) {
       console.error("SAVE RECIPES FAILED:", e);
       alert("Kunde inte spara recept – se Console.");
@@ -317,10 +382,13 @@ const App: React.FC = () => {
   };
 
   const handleDeleteRecipe = async (id: number) => {
+    // Optimistiskt i UI
     setRecipes((prev) => prev.filter((r) => r.id !== id));
 
     try {
-      await deleteRecipeFromSupabase(id);
+      await withRecipeWriteGuard(async () => {
+        await deleteRecipeFromSupabase(id);
+      });
     } catch (e) {
       console.error("DELETE RECIPE FAILED:", e);
       alert("Kunde inte ta bort recept – se Console.");
@@ -332,10 +400,16 @@ const App: React.FC = () => {
   };
 
   const handleUpdatePlans = async (newPlans: WeekPlan[]) => {
-    setPlans(newPlans);
+    const normalized = newPlans.map((p) => ({
+      ...p,
+      days: normalizeDayPlans(p.days),
+      activeDayIndices: p.activeDayIndices ?? ALL_DAYS,
+    }));
+
+    setPlans(normalized);
 
     try {
-      await saveWeekPlansToSupabase(newPlans);
+      await saveWeekPlansToSupabase(normalized);
     } catch (e) {
       console.error("SAVE WEEK PLANS FAILED:", e);
       alert("Kunde inte spara planering – se Console.");
@@ -346,20 +420,24 @@ const App: React.FC = () => {
     }
   };
 
-  // Ny: dedikerad “mark cooked” som är liten och iOS-tålig
-  const handleMarkCooked = async (recipeIds: number[], isoDate: string) => {
+  // NYTT: "Spara som lagade" – per recept kan datum skilja
+  const handleMarkCooked = async (updates: { id: number; lastCooked: string }[]) => {
     // Optimistiskt i UI
-    setRecipes((prev) =>
-      prev.map((r) =>
-        recipeIds.includes(r.id) ? { ...r, lastCooked: isoDate } : r
-      )
-    );
+    setRecipes((prev) => {
+      const map = new Map<number, string>();
+      updates.forEach((u) => map.set(u.id, u.lastCooked));
+      return prev.map((r) =>
+        map.has(r.id) ? { ...r, lastCooked: map.get(r.id)! } : r
+      );
+    });
 
     try {
-      await updateLastCookedInSupabase(recipeIds, isoDate);
+      await withRecipeWriteGuard(async () => {
+        await updateLastCookedUpdates(updates);
+      });
     } catch (e) {
-      console.error("UPDATE LAST_COOKED FAILED:", e);
-      // Försök återladda (så vi inte “lurar” UI)
+      console.error("SAVE last_cooked FAILED:", e);
+      // Återladda för att undvika att UI visar fel
       try {
         const r = await fetchRecipesFromSupabase();
         setRecipes(r);

@@ -1,86 +1,107 @@
+import { DayPlan, Recipe, SWEDISH_DAYS } from "../types";
 
-import { Recipe, DayPlan } from '../types';
+const formatDateForICS = (date: Date) => {
+  return date.toISOString().replace(/[-:]/g, "").split(".")[0] + "Z";
+};
 
-/**
- * Calculates the correct date for a specific day of an ISO week.
- * Uses UTC to avoid timezone shifts during calculation.
- */
-function getDateOfWeekDay(weekStr: string, dayIndex: number): Date {
-  const [year, weekNum] = weekStr.split('-W').map(Number);
-  
-  // ISO 8601 week 1 is the week with the first Thursday of the year (Jan 4 is always in it)
-  const jan4 = new Date(Date.UTC(year, 0, 4));
-  
-  // Find the Monday of that week
-  const day = jan4.getUTCDay() || 7; // Sunday=7, Monday=1
-  const mondayOfFirstWeek = new Date(jan4);
-  mondayOfFirstWeek.setUTCDate(jan4.getUTCDate() - day + 1);
-  
-  // Add weeks and days
-  const targetDate = new Date(mondayOfFirstWeek);
-  targetDate.setUTCDate(mondayOfFirstWeek.getUTCDate() + (weekNum - 1) * 7 + dayIndex);
-  
-  return targetDate;
-}
+const getWeekDates = (weekString: string) => {
+  const [year, week] = weekString.split("-W").map(Number);
+  const firstDayOfYear = new Date(Date.UTC(year, 0, 1));
+  const daysOffset = (week - 1) * 7;
 
-function formatTimeForICS(date: Date, hours: number, minutes: number): string {
-  const y = date.getUTCFullYear();
-  const m = String(date.getUTCMonth() + 1).padStart(2, '0');
-  const d = String(date.getUTCDate()).padStart(2, '0');
-  const h = String(hours).padStart(2, '0');
-  const min = String(minutes).padStart(2, '0');
-  // Return local format (no Z) so the phone handles the timezone conversion
-  return `${y}${m}${d}T${h}${min}00`;
-}
+  // ISO week starts on Monday
+  const firstMonday = new Date(firstDayOfYear);
+  const dayOfWeek = firstDayOfYear.getUTCDay();
+  const diff = (dayOfWeek === 0 ? -6 : 1) - dayOfWeek;
+  firstMonday.setUTCDate(firstDayOfYear.getUTCDate() + diff);
 
-export const generateICS = (weekIdentifier: string, plans: DayPlan[], recipes: Recipe[]) => {
-  const events: string[] = [];
+  const weekStart = new Date(firstMonday);
+  weekStart.setUTCDate(firstMonday.getUTCDate() + daysOffset);
 
-  plans.forEach((plan) => {
-    if (plan.recipeId === null) return;
-    const recipe = recipes.find(r => r.id === plan.recipeId);
-    if (!recipe) return;
-
-    const baseDate = getDateOfWeekDay(weekIdentifier, plan.dayId);
-    const startStr = formatTimeForICS(baseDate, 17, 30);
-    const endStr = formatTimeForICS(baseDate, 18, 30);
-    const stamp = new Date().toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
-    const uid = `plan-${weekIdentifier}-${plan.dayId}-${plan.recipeId}-${Date.now()}@matplaneraren`;
-
-    const event = [
-      'BEGIN:VEVENT',
-      `UID:${uid}`,
-      `DTSTAMP:${stamp}`,
-      `DTSTART:${startStr}`,
-      `DTEND:${endStr}`,
-      `SUMMARY:Middag: ${recipe.name}`,
-      `DESCRIPTION:Kategori: ${recipe.category}\\nKälla: ${recipe.source || 'Okänd'}`,
-      'BEGIN:VALARM',
-      'ACTION:DISPLAY',
-      'DESCRIPTION:Dags att laga mat!',
-      'TRIGGER:-PT15M',
-      'END:VALARM',
-      'END:VEVENT'
-    ].join('\r\n');
-
-    events.push(event);
+  return Array.from({ length: 7 }, (_, i) => {
+    const date = new Date(weekStart);
+    date.setUTCDate(weekStart.getUTCDate() + i);
+    return date;
   });
+};
+
+const escapeICS = (text: string) => {
+  return text
+    .replace(/\\/g, "\\\\")
+    .replace(/\n/g, "\\n")
+    .replace(/,/g, "\\,")
+    .replace(/;/g, "\\;");
+};
+
+type GenerateIcsOptions = {
+  // om du vill ha ett specifikt filnamn (utan .ics)
+  fileName?: string;
+};
+
+export const generateICS = (
+  weekString: string,
+  plans: DayPlan[],
+  recipes: Recipe[],
+  options?: GenerateIcsOptions
+) => {
+  const weekDates = getWeekDates(weekString);
+
+  const events = plans
+    .filter((p) => {
+      const hasRecipe = p.recipeId !== null;
+      const hasText = !!(p.freeText && p.freeText.trim().length > 0);
+      return hasRecipe || hasText;
+    })
+    .map((plan) => {
+      const date = weekDates[plan.dayId];
+
+      const recipe = plan.recipeId !== null ? recipes.find((r) => r.id === plan.recipeId) : null;
+      const title =
+        recipe?.name?.trim() ||
+        (plan.freeText ? plan.freeText.trim() : "") ||
+        "Måltid";
+
+      const description = recipe?.source ? `Källa: ${recipe.source}` : "";
+
+      // Starttid: 17:30 lokal tid
+const start = new Date(date);
+      start.setHours(17, 30, 0, 0);
+
+      // Sluttid: 18:30 lokal tid (1h senare)
+      const end = new Date(start);
+      end.setHours(start.getHours() + 1);
+
+      const uid = `${weekString}-${plan.dayId}-${plan.recipeId ?? "text"}@matplan`;
+
+      return [
+        "BEGIN:VEVENT",
+        `UID:${escapeICS(uid)}`,
+        `DTSTAMP:${formatDateForICS(new Date())}`,
+        `DTSTART:${formatDateForICS(start)}`,
+        `DTEND:${formatDateForICS(end)}`,
+        `SUMMARY:${escapeICS(title)}`,
+        `DESCRIPTION:${escapeICS(description)}`,
+        "END:VEVENT",
+      ].join("\n");
+    });
 
   const icsContent = [
-    'BEGIN:VCALENDAR',
-    'VERSION:2.0',
-    'PRODID:-//Matplaneraren//NONSGML v1.4//EN',
-    'CALSCALE:GREGORIAN',
-    'METHOD:PUBLISH',
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//Matplaneraren//SE",
+    "CALSCALE:GREGORIAN",
     ...events,
-    'END:VCALENDAR'
-  ].join('\r\n');
+    "END:VCALENDAR",
+  ].join("\n");
 
-  const blob = new Blob([icsContent], { type: 'text/calendar;charset=utf-8' });
-  const url = window.URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.setAttribute('download', `matplanering-${weekIdentifier}.ics`);
+  const fileNameBase = options?.fileName?.trim()
+    ? options.fileName.trim()
+    : `matplan-${weekString}`;
+
+  const blob = new Blob([icsContent], { type: "text/calendar;charset=utf-8" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = `${fileNameBase}.ics`;
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);

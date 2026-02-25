@@ -6,13 +6,40 @@ interface MealPlannerProps {
   recipes: Recipe[];
   plans: WeekPlan[];
   onUpdatePlans: (plans: WeekPlan[]) => void;
+
+  // Finns kvar (t.ex. om RecipeList uppdaterar)
   onUpdateRecipes: (recipes: Recipe[]) => void;
 
-  // NY: liten, iOS-talig uppdatering av last_cooked
-  onMarkCooked: (recipeIds: number[], isoDate: string) => Promise<void>;
+  // NYTT: uppdatera lastCooked med "rätt" datum per recept
+  onMarkCooked: (updates: { id: number; lastCooked: string }[]) => Promise<void>;
 }
 
 const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
+
+function isoWeekDayToISODate(weekIdentifier: string, dayId: number): string {
+  // weekIdentifier: "2026-W02"
+  const match = /^(\d{4})-W(\d{2})$/.exec(weekIdentifier);
+  if (!match) {
+    // fallback: idag (ska inte hända om input type="week" används)
+    return new Date().toISOString().slice(0, 10);
+  }
+
+  const year = Number(match[1]);
+  const week = Number(match[2]);
+
+  // ISO week algorithm (UTC-safe)
+  // Week 1 = week with Jan 4
+  const jan4 = new Date(Date.UTC(year, 0, 4));
+  const jan4IsoDow = jan4.getUTCDay() || 7; // 1..7 (Mon..Sun)
+
+  const week1Monday = new Date(jan4);
+  week1Monday.setUTCDate(jan4.getUTCDate() - (jan4IsoDow - 1)); // Monday of week 1
+
+  const target = new Date(week1Monday);
+  target.setUTCDate(week1Monday.getUTCDate() + (week - 1) * 7 + dayId);
+
+  return target.toISOString().slice(0, 10); // YYYY-MM-DD
+}
 
 const MealPlanner: React.FC<MealPlannerProps> = ({
   recipes,
@@ -33,6 +60,9 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
 
   const [activeDayIndices, setActiveDayIndices] = useState<number[]>(ALL_DAYS);
   const [showRecipeModal, setShowRecipeModal] = useState<number | null>(null);
+
+  // Fritext-draft i modalen
+  const [freeTextDraft, setFreeTextDraft] = useState("");
 
   const currentPlan = useMemo(() => {
     return (
@@ -84,16 +114,26 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
     });
   };
 
-  const updateDayRecipe = (dayId: number, recipeId: number | null) => {
+  const updateDayPlan = (dayId: number, patch: Partial<DayPlan>) => {
     const existingPlanIdx = plans.findIndex((p) => p.weekIdentifier === selectedWeek);
     const newPlans = [...plans];
 
     if (existingPlanIdx > -1) {
       const dayIdx = newPlans[existingPlanIdx].days.findIndex((d) => d.dayId === dayId);
+
       if (dayIdx > -1) {
-        newPlans[existingPlanIdx].days[dayIdx].recipeId = recipeId;
+        newPlans[existingPlanIdx].days[dayIdx] = {
+          ...newPlans[existingPlanIdx].days[dayIdx],
+          ...patch,
+          dayId,
+        };
       } else {
-        newPlans[existingPlanIdx].days.push({ dayId, recipeId });
+        newPlans[existingPlanIdx].days.push({
+          dayId,
+          recipeId: null,
+          freeText: null,
+          ...patch,
+        });
       }
 
       // Bevara aktiva dagar för veckan
@@ -101,13 +141,34 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
     } else {
       newPlans.push({
         weekIdentifier: selectedWeek,
-        days: [{ dayId, recipeId }],
+        days: [
+          {
+            dayId,
+            recipeId: null,
+            freeText: null,
+            ...patch,
+          },
+        ],
         activeDayIndices: activeDayIndices,
       });
     }
 
     onUpdatePlans(newPlans);
+  };
+
+  const updateDayRecipe = (dayId: number, recipeId: number | null) => {
+    // Välj recept → nolla fritext
+    updateDayPlan(dayId, { recipeId, freeText: null });
     setShowRecipeModal(null);
+    setFreeTextDraft("");
+  };
+
+  const updateDayFreeText = (dayId: number, text: string) => {
+    const cleaned = text.trim();
+    // Skriv fritext → nolla recipeId
+    updateDayPlan(dayId, { recipeId: null, freeText: cleaned.length ? cleaned : null });
+    setShowRecipeModal(null);
+    setFreeTextDraft("");
   };
 
   /**
@@ -166,21 +227,21 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
   const randomizeAll = () => {
     if (recipes.length === 0) return;
 
-    // 1) Starta med alla recept som redan ligger på INAKTIVA dagar (så vi inte dubblar dem)
     const { usedIds, usedCategories } = buildWeekExcludes();
 
-    // 2) Vi ska sätta nya val för alla AKTIVA dagar
     const newDayPlans: DayPlan[] = activeDayIndices.map((dayId) => {
       const selected = pickSmartRecipe(usedIds, usedCategories);
       if (selected) {
         usedIds.add(selected.id);
         usedCategories.add(selected.category);
-        return { dayId, recipeId: selected.id };
+
+        // Ersätt ev fritext, som du ville
+        return { dayId, recipeId: selected.id, freeText: null };
       }
-      return { dayId, recipeId: null };
+      return { dayId, recipeId: null, freeText: null };
     });
 
-    // 3) Behåll övriga dagar som inte är aktiva (om de finns i planen)
+    // Behåll övriga dagar som inte är aktiva (om de finns i planen)
     const existingOtherDays = currentPlan.days.filter((d) => !activeDayIndices.includes(d.dayId));
 
     const mergedDays = [...existingOtherDays, ...newDayPlans].sort((a, b) => a.dayId - b.dayId);
@@ -194,37 +255,71 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
   };
 
   const randomizeDay = (dayId: number) => {
-    // Bygg exkludering för HELA veckan, men tillåt att vi byter just denna dag
     const { usedIds, usedCategories } = buildWeekExcludes(dayId);
 
     const selected = pickSmartRecipe(usedIds, usedCategories);
-    if (selected) updateDayRecipe(dayId, selected.id);
+    if (selected) {
+      // Ersätt även fritext om den fanns
+      updateDayPlan(dayId, { recipeId: selected.id, freeText: null });
+    }
   };
 
-  const handleExport = () => {
-    const activePlans = currentPlan.days.filter(
-      (d) => activeDayIndices.includes(d.dayId) && d.recipeId !== null
-    );
+  const getDayPlan = (dayIdx: number) => currentPlan.days.find((d) => d.dayId === dayIdx);
+
+  const handleExportAll = () => {
+    const activePlans = currentPlan.days.filter((d) => {
+      if (!activeDayIndices.includes(d.dayId)) return false;
+
+      const hasRecipe = d.recipeId !== null;
+      const hasText = !!(d.freeText && d.freeText.trim().length > 0);
+
+      return hasRecipe || hasText;
+    });
 
     if (activePlans.length === 0) return;
 
-    // Recept-ID:n som ingår i exporten
-    const recipeIdsInExport = activePlans
-      .map((p) => p.recipeId)
-      .filter((id): id is number => id !== null);
+    // Exportera kalenderfilen (alla valda dagar) – INGEN DB-uppdatering här
+    generateICS(selectedWeek, activePlans, recipes);
+  };
 
-    // Sätt "Senast lagad" = idag (YYYY-MM-DD)
-    const todayIsoDate = new Date().toISOString().slice(0, 10);
+  const handleExportDay = (dayId: number) => {
+    const plan = currentPlan.days.find((d) => d.dayId === dayId);
+    if (!plan) return;
 
-    // Viktigt för iOS:
-    // - Starta Supabase-uppdateringen först (utan await), så requesten hinner skickas
-    // - Sedan triggar vi ICS-exporten (som på iOS kan “störa” JS/requests)
-    onMarkCooked(recipeIdsInExport, todayIsoDate).catch((e) => {
-      console.error("Kunde inte uppdatera Senast lagad:", e);
+    const hasRecipe = plan.recipeId !== null;
+    const hasText = !!(plan.freeText && plan.freeText.trim().length > 0);
+    if (!hasRecipe && !hasText) return;
+
+    // Exportera kalenderfilen (en dag / en event)
+    const dayShort = SWEDISH_DAYS[dayId].substring(0, 3);
+    generateICS(selectedWeek, [plan], recipes, { fileName: `matplan-${selectedWeek}-${dayShort}` });
+  };
+
+  const handleSaveCookedAll = async () => {
+    // Bygg id -> lastCooked (senaste dagen i veckan vinner om samma recept upprepas)
+    const byRecipeId = new Map<number, string>();
+
+    currentPlan.days.forEach((d) => {
+      if (!activeDayIndices.includes(d.dayId)) return;
+      if (d.recipeId == null) return;
+
+      const cookDate = isoWeekDayToISODate(selectedWeek, d.dayId);
+      const existing = byRecipeId.get(d.recipeId);
+
+      // ISO YYYY-MM-DD kan jämföras som sträng
+      if (!existing || cookDate > existing) {
+        byRecipeId.set(d.recipeId, cookDate);
+      }
     });
 
-    // Exportera kalenderfilen
-    generateICS(selectedWeek, activePlans, recipes);
+    const updates = Array.from(byRecipeId.entries()).map(([id, lastCooked]) => ({
+      id,
+      lastCooked,
+    }));
+
+    if (updates.length === 0) return;
+
+    await onMarkCooked(updates);
   };
 
   const formatDate = (isoString?: string | null) => {
@@ -275,10 +370,12 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
         >
           Slumpa fram allt
         </button>
+
+        {/* Export all */}
         <button
-          onClick={handleExport}
+          onClick={handleExportAll}
           className="flex-none bg-gray-900 text-white p-4 rounded-2xl shadow-lg shadow-gray-200 active:scale-95 transition-transform"
-          title="Exportera till kalender"
+          title="Exportera alla valda dagar"
         >
           <svg
             xmlns="http://www.w3.org/2000/svg"
@@ -295,6 +392,28 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
             />
           </svg>
         </button>
+
+        {/* Save cooked */}
+        <button
+          onClick={handleSaveCookedAll}
+          className="flex-none bg-emerald-50 text-emerald-700 p-4 rounded-2xl shadow-sm border border-emerald-100 active:scale-95 transition-transform"
+          title="Spara samtliga planerade rätter som lagade (med datum från veckan)"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            className="h-6 w-6"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M5 13l4 4L19 7"
+            />
+          </svg>
+        </button>
       </div>
 
       {/* Planning List */}
@@ -302,7 +421,10 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
         {activeDayIndices.length > 0 ? (
           activeDayIndices.map((dayIdx) => {
             const plan = currentPlan.days.find((d) => d.dayId === dayIdx);
-            const recipe = recipes.find((r) => r.id === plan?.recipeId);
+            const recipe =
+              plan?.recipeId != null ? recipes.find((r) => r.id === plan.recipeId) : null;
+            const freeText = (plan?.freeText ?? "").trim();
+            const hasSomething = !!recipe || freeText.length > 0;
 
             return (
               <div
@@ -313,7 +435,31 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
                   <span className="text-sm font-bold text-emerald-600 uppercase tracking-wider">
                     {SWEDISH_DAYS[dayIdx]}
                   </span>
+
                   <div className="flex gap-2">
+                    {/* Exportera en dag */}
+                    <button
+                      onClick={() => handleExportDay(dayIdx)}
+                      className="p-1.5 text-gray-400 hover:text-gray-900 bg-gray-50 rounded-lg transition-colors disabled:opacity-40 disabled:hover:text-gray-400"
+                      title="Ladda ner endast denna dag"
+                      disabled={!hasSomething}
+                    >
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        className="h-5 w-5"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M12 3v10m0 0l-3-3m3 3l3-3M5 21h14"
+                        />
+                      </svg>
+                    </button>
+
                     <button
                       onClick={() => randomizeDay(dayIdx)}
                       className="p-1.5 text-gray-400 hover:text-emerald-500 bg-gray-50 rounded-lg transition-colors"
@@ -334,10 +480,15 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
                         />
                       </svg>
                     </button>
+
                     <button
-                      onClick={() => setShowRecipeModal(dayIdx)}
+                      onClick={() => {
+                        setShowRecipeModal(dayIdx);
+                        const existingFreeText = (getDayPlan(dayIdx)?.freeText ?? "").trim();
+                        setFreeTextDraft(existingFreeText);
+                      }}
                       className="p-1.5 text-gray-400 hover:text-emerald-500 bg-gray-50 rounded-lg transition-colors"
-                      title="Välj rätt manuellt"
+                      title="Välj rätt eller skriv fritext"
                     >
                       <svg
                         xmlns="http://www.w3.org/2000/svg"
@@ -371,6 +522,17 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
                       </span>
                     </div>
                   </div>
+                ) : freeText.length > 0 ? (
+                  <div>
+                    <h3 className="text-lg font-bold text-gray-900 leading-tight mb-1">
+                      {freeText}
+                    </h3>
+                    <div className="flex flex-wrap gap-2 items-center">
+                      <span className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded font-bold uppercase tracking-tighter">
+                        Fritext
+                      </span>
+                    </div>
+                  </div>
                 ) : (
                   <p className="text-gray-300 italic">Ingen rätt vald...</p>
                 )}
@@ -389,9 +551,12 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fadeIn">
           <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden max-h-[80vh] flex flex-col">
             <div className="p-6 border-b border-gray-100 flex justify-between items-center">
-              <h3 className="text-xl font-bold">Välj en rätt</h3>
+              <h3 className="text-xl font-bold">Välj en rätt eller skriv fritext</h3>
               <button
-                onClick={() => setShowRecipeModal(null)}
+                onClick={() => {
+                  setShowRecipeModal(null);
+                  setFreeTextDraft("");
+                }}
                 className="text-gray-400 hover:text-gray-600"
               >
                 <svg
@@ -406,6 +571,35 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
               </button>
             </div>
 
+            {/* Fritext */}
+            <div className="p-4 border-b border-gray-100 space-y-3">
+              <label className="block text-xs font-bold text-gray-600 uppercase tracking-wide">
+                Fritext
+              </label>
+              <textarea
+                value={freeTextDraft}
+                onChange={(e) => setFreeTextDraft(e.target.value)}
+                placeholder="Skriv valfri text..."
+                className="w-full min-h-[80px] p-3 bg-gray-50 rounded-2xl border-2 border-transparent focus:border-emerald-500 focus:outline-none"
+              />
+              <div className="flex gap-2">
+                <button
+                  onClick={() => updateDayFreeText(showRecipeModal, freeTextDraft)}
+                  className="flex-1 bg-gray-900 text-white py-3 rounded-2xl font-bold active:scale-95 transition-transform"
+                >
+                  Spara fritext
+                </button>
+                <button
+                  onClick={() => updateDayFreeText(showRecipeModal, "")}
+                  className="flex-none px-4 bg-gray-100 text-gray-700 py-3 rounded-2xl font-bold active:scale-95 transition-transform"
+                  title="Rensa fritext"
+                >
+                  Rensa
+                </button>
+              </div>
+            </div>
+
+            {/* Receptlista */}
             <div className="overflow-y-auto p-4 space-y-2">
               <button
                 onClick={() => updateDayRecipe(showRecipeModal, null)}
