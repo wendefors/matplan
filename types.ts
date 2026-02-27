@@ -43,4 +43,5 @@ export type Recipe = {
   hasRecipeContent: boolean;
   category: string;
   lastCooked: string | null;
+  baseServings: number;
 };

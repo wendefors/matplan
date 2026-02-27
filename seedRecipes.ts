@@ -27,6 +27,7 @@ async function seed() {
         has_recipe_content: r.hasRecipeContent,
         category: r.category,
         last_cooked: r.lastCooked,
+        base_servings: r.baseServings ?? 4,
       },
       { onConflict: "id" }
     );

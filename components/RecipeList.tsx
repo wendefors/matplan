@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { RECIPE_CATEGORIES, Recipe, RecipeCategory } from "../types";
 import RecipeMetaEditor from "./RecipeMetaEditor";
 
@@ -17,6 +17,7 @@ const RecipeList: React.FC<RecipeListProps> = ({
   onRefreshRecipes,
 }) => {
   const navigate = useNavigate();
+  const location = useLocation();
   const [selectedRecipe, setSelectedRecipe] = useState<Recipe | null>(null);
   const [metaEditorError, setMetaEditorError] = useState<string | null>(null);
 
@@ -51,6 +52,7 @@ const RecipeList: React.FC<RecipeListProps> = ({
       category: newCategory,
       hasRecipeContent: false,
       lastCooked: null,
+      baseServings: 4,
     };
 
     onUpdateRecipes([...recipes, newRecipe]);
@@ -107,6 +109,11 @@ const RecipeList: React.FC<RecipeListProps> = ({
             }}
             onSave={handleSaveMeta}
             onEditContent={(recipeId) => navigate(`/recipes/${recipeId}/content`)}
+            onViewRecipe={(recipeId) =>
+              navigate(`/recipes/${recipeId}/view`, {
+                state: { from: `${location.pathname}${location.search}` },
+              })
+            }
           />
         </section>
       )}

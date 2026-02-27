@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { Recipe, WeekPlan, SWEDISH_DAYS, DayPlan } from "../types";
 import { generateICS } from "../services/icsService";
-import RecipeViewer from "./RecipeViewer";
 
 interface MealPlannerProps {
   recipes: Recipe[];
@@ -49,6 +49,8 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
   onUpdateRecipes,
   onMarkCooked,
 }) => {
+  const navigate = useNavigate();
+  const location = useLocation();
   const [selectedWeek, setSelectedWeek] = useState(() => {
     const now = new Date();
     const d = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
@@ -61,7 +63,6 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
 
   const [activeDayIndices, setActiveDayIndices] = useState<number[]>(ALL_DAYS);
   const [showRecipeModal, setShowRecipeModal] = useState<number | null>(null);
-  const [viewingRecipeId, setViewingRecipeId] = useState<number | null>(null);
 
   // Fritext-draft i modalen
   const [freeTextDraft, setFreeTextDraft] = useState("");
@@ -90,10 +91,6 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        if (viewingRecipeId !== null) {
-          setViewingRecipeId(null);
-          return;
-        }
         if (showRecipeModal !== null) {
           setShowRecipeModal(null);
           setFreeTextDraft("");
@@ -105,7 +102,7 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
     return () => {
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [viewingRecipeId, showRecipeModal]);
+  }, [showRecipeModal]);
 
   // Hjälpare: spara aktuell veckas activeDayIndices in i plans
   const persistActiveDaysForWeek = (newActive: number[]) => {
@@ -527,14 +524,38 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
                         />
                       </svg>
                     </button>
+
+                    <button
+                      onClick={() => {
+                        if (!recipe) return;
+                        navigate(`/recipes/${recipe.id}/view`, {
+                          state: { from: `${location.pathname}${location.search}` },
+                        });
+                      }}
+                      className="p-1.5 text-gray-400 hover:text-emerald-500 bg-gray-50 rounded-lg transition-colors disabled:opacity-40"
+                      title="Visa recept"
+                      disabled={!recipe}
+                    >
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        className="h-5 w-5"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M15 12H9m12 0c0 1.657-3.582 6-9 6s-9-4.343-9-6 3.582-6 9-6 9 4.343 9 6zm-9 3a3 3 0 100-6 3 3 0 000 6z"
+                        />
+                      </svg>
+                    </button>
                   </div>
                 </div>
 
                 {recipe ? (
-                  <div
-                    onClick={() => setViewingRecipeId(recipe.id)}
-                    className="cursor-pointer"
-                  >
+                  <div>
                     <h3 className="text-lg font-bold text-gray-900 leading-tight mb-1">
                       {recipe.name}
                     </h3>
@@ -652,28 +673,6 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
                 </button>
               ))}
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* Recipe Viewer Modal */}
-      {viewingRecipeId !== null && (
-        <div
-          className="fixed inset-0 z-[60] bg-black/50 backdrop-blur-sm animate-fadeIn"
-          onClick={() => setViewingRecipeId(null)}
-        >
-          <div
-            className="h-full max-w-lg mx-auto bg-white shadow-2xl overflow-hidden"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <RecipeViewer
-              recipeId={viewingRecipeId}
-              onClose={() => setViewingRecipeId(null)}
-              onStartCooking={(recipeId) => {
-                console.log("start cooking", recipeId);
-                setViewingRecipeId(null);
-              }}
-            />
           </div>
         </div>
       )}

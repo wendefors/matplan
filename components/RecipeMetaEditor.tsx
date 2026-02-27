@@ -6,6 +6,7 @@ type RecipeMetaEditorProps = {
   onClose: () => void;
   onSave: (recipe: Recipe) => Promise<void> | void;
   onEditContent: (recipeId: number) => void;
+  onViewRecipe: (recipeId: number) => void;
 };
 
 const RecipeMetaEditor: React.FC<RecipeMetaEditorProps> = ({
@@ -13,10 +14,14 @@ const RecipeMetaEditor: React.FC<RecipeMetaEditorProps> = ({
   onClose,
   onSave,
   onEditContent,
+  onViewRecipe,
 }) => {
   const [name, setName] = useState(recipe.name);
   const [category, setCategory] = useState(recipe.category);
   const [source, setSource] = useState(recipe.source ?? "");
+  const [baseServingsInput, setBaseServingsInput] = useState(
+    String(recipe.baseServings ?? 4)
+  );
   const [hasRecipeContent, setHasRecipeContent] = useState(recipe.hasRecipeContent);
   const [lastCooked, setLastCooked] = useState<string | null>(recipe.lastCooked);
   const [isSaving, setIsSaving] = useState(false);
@@ -26,6 +31,7 @@ const RecipeMetaEditor: React.FC<RecipeMetaEditorProps> = ({
     setName(recipe.name);
     setCategory(recipe.category);
     setSource(recipe.source ?? "");
+    setBaseServingsInput(String(recipe.baseServings ?? 4));
     setHasRecipeContent(recipe.hasRecipeContent);
     setLastCooked(recipe.lastCooked);
     setError(null);
@@ -35,6 +41,11 @@ const RecipeMetaEditor: React.FC<RecipeMetaEditorProps> = ({
     event.preventDefault();
     if (!name.trim()) {
       setError("Namn är obligatoriskt.");
+      return;
+    }
+    const parsedBaseServings = Number(baseServingsInput);
+    if (!Number.isInteger(parsedBaseServings) || parsedBaseServings < 1) {
+      setError("Portioner måste vara ett heltal minst 1.");
       return;
     }
 
@@ -47,6 +58,7 @@ const RecipeMetaEditor: React.FC<RecipeMetaEditorProps> = ({
           name: name.trim(),
           category: category.trim() || "Annat",
           source: source.trim() || null,
+          baseServings: parsedBaseServings,
           hasRecipeContent,
           lastCooked,
         })
@@ -119,6 +131,22 @@ const RecipeMetaEditor: React.FC<RecipeMetaEditorProps> = ({
         />
       </div>
 
+      <div>
+        <label className="block text-xs font-bold text-emerald-700 uppercase mb-1">
+          Portioner
+        </label>
+        <input
+          type="number"
+          min={1}
+          step={1}
+          inputMode="numeric"
+          value={baseServingsInput}
+          onChange={(e) => setBaseServingsInput(e.target.value)}
+          className="w-full p-3 bg-white border-none rounded-xl focus:ring-2 focus:ring-emerald-500"
+          placeholder="4"
+        />
+      </div>
+
       <label className="flex items-center gap-2 text-sm text-emerald-800 font-medium">
         <input
           type="checkbox"
@@ -155,6 +183,14 @@ const RecipeMetaEditor: React.FC<RecipeMetaEditorProps> = ({
           className="w-full bg-gray-900 text-white py-3 rounded-xl font-bold"
         >
           Redigera receptinnehåll
+        </button>
+
+        <button
+          type="button"
+          onClick={() => onViewRecipe(recipe.id)}
+          className="w-full bg-white border border-emerald-200 text-emerald-700 py-3 rounded-xl font-bold"
+        >
+          Visa recept
         </button>
       </div>
     </form>

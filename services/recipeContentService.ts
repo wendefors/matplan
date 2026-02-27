@@ -35,6 +35,7 @@ export type RecipeFullRecipe = {
   source: string | null;
   hasRecipeContent?: boolean;
   lastCooked?: string | null;
+  baseServings?: number;
 };
 
 export type RecipeFullIngredientInput = {
@@ -107,6 +108,7 @@ type DbRecipeFullRow = {
   source: string | null;
   has_recipe_content: boolean;
   last_cooked: string | null;
+  base_servings: number | null;
 };
 
 type DbRecipeIngredientRow = {
@@ -217,6 +219,7 @@ function normalizeRecipeFullInput(input: SaveRecipeFullInput): RecipeFull {
       hasRecipeContent:
         input.recipe.hasRecipeContent ?? normalizedSteps.length > 0,
       lastCooked: input.recipe.lastCooked ?? null,
+      baseServings: input.recipe.baseServings,
     },
     ingredients: normalizedIngredients,
     steps: normalizedSteps,
@@ -375,6 +378,14 @@ export async function saveRecipeFull(
     source: normalized.recipe.source,
     has_recipe_content: !!normalized.recipe.hasRecipeContent,
     last_cooked: normalized.recipe.lastCooked ?? null,
+    ...(normalized.recipe.baseServings !== undefined
+      ? {
+          base_servings: Math.max(
+            1,
+            Math.round(normalized.recipe.baseServings)
+          ),
+        }
+      : {}),
   };
 
   const { error: recipeError } = await supabase
@@ -469,7 +480,9 @@ export async function fetchRecipeFull(recipeId: number): Promise<RecipeFull> {
 
   const { data: recipeData, error: recipeError } = await supabase
     .from("recipes")
-    .select("id,user_id,name,category,source,has_recipe_content,last_cooked")
+    .select(
+      "id,user_id,name,category,source,has_recipe_content,last_cooked,base_servings"
+    )
     .eq("id", recipeId)
     .eq("user_id", userId)
     .single();
@@ -511,6 +524,7 @@ export async function fetchRecipeFull(recipeId: number): Promise<RecipeFull> {
       source: recipeRow.source ?? null,
       hasRecipeContent: recipeRow.has_recipe_content,
       lastCooked: recipeRow.last_cooked,
+      baseServings: Math.max(1, Math.round(recipeRow.base_servings ?? 4)),
     },
     ingredients: ingredientRows.map((row) => ({
       id: row.id,

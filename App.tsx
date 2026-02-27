@@ -4,6 +4,7 @@ import { Recipe, WeekPlan, DayPlan } from "./types";
 import MealPlanner from "./components/MealPlanner";
 import RecipeList from "./components/RecipeList";
 import RecipeContentEditor from "./components/RecipeContentEditor";
+import RecipeViewer from "./components/RecipeViewer";
 import Login from "./components/Login";
 import { supabase } from "./supabaseClient";
 
@@ -15,6 +16,7 @@ type DbRecipe = {
   has_recipe_content: boolean;
   category: string | null;
   last_cooked: string | null;
+  base_servings: number | null;
 };
 
 type DbWeekPlan = {
@@ -56,12 +58,20 @@ async function getCurrentUserId(): Promise<string> {
   return data.user.id;
 }
 
+function normalizeBaseServings(value: unknown): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 4;
+  return Math.max(1, Math.round(parsed));
+}
+
 /* ---- Recipes ---- */
 
 async function fetchRecipesFromSupabase(): Promise<Recipe[]> {
   const { data, error } = await supabase
     .from("recipes")
-    .select("id,user_id,name,source,has_recipe_content,category,last_cooked")
+    .select(
+      "id,user_id,name,source,has_recipe_content,category,last_cooked,base_servings"
+    )
     .order("name", { ascending: true });
 
   if (error) throw error;
@@ -73,6 +83,7 @@ async function fetchRecipesFromSupabase(): Promise<Recipe[]> {
     hasRecipeContent: r.has_recipe_content,
     category: r.category ?? "Övrigt",
     lastCooked: r.last_cooked,
+    baseServings: normalizeBaseServings(r.base_servings),
   }));
 }
 
@@ -87,6 +98,7 @@ async function saveRecipesToSupabase(recipes: Recipe[]): Promise<void> {
     has_recipe_content: r.hasRecipeContent,
     category: r.category || null,
     last_cooked: r.lastCooked,
+    base_servings: normalizeBaseServings(r.baseServings),
   }));
 
   const { error } = await supabase.from("recipes").upsert(payload, {
@@ -501,6 +513,7 @@ const App: React.FC = () => {
                 />
               }
             />
+            <Route path="/recipes/:id/view" element={<RecipeViewer />} />
           </Routes>
         </main>
 

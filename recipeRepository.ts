@@ -8,12 +8,13 @@ type DbRecipe = {
   has_recipe_content: boolean;
   category: string;
   last_cooked: string | null;
+  base_servings: number | null;
 };
 
 export async function fetchRecipes(): Promise<Recipe[]> {
   const { data, error } = await supabase
     .from("recipes")
-    .select("id,name,source,has_recipe_content,category,last_cooked")
+    .select("id,name,source,has_recipe_content,category,last_cooked,base_servings")
     .order("name", { ascending: true });
 
   if (error) throw error;
@@ -25,6 +26,7 @@ export async function fetchRecipes(): Promise<Recipe[]> {
     hasRecipeContent: r.has_recipe_content,
     category: r.category,
     lastCooked: r.last_cooked,
+    baseServings: Math.max(1, Math.round(r.base_servings ?? 4)),
   }));
 }
 
