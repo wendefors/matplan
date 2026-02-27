@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect } from "react";
 import { Recipe, WeekPlan, SWEDISH_DAYS, DayPlan } from "../types";
 import { generateICS } from "../services/icsService";
+import RecipeViewer from "./RecipeViewer";
 
 interface MealPlannerProps {
   recipes: Recipe[];
@@ -60,6 +61,7 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
 
   const [activeDayIndices, setActiveDayIndices] = useState<number[]>(ALL_DAYS);
   const [showRecipeModal, setShowRecipeModal] = useState<number | null>(null);
+  const [viewingRecipeId, setViewingRecipeId] = useState<number | null>(null);
 
   // Fritext-draft i modalen
   const [freeTextDraft, setFreeTextDraft] = useState("");
@@ -84,6 +86,26 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
     setActiveDayIndices(fromPlan);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedWeek]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        if (viewingRecipeId !== null) {
+          setViewingRecipeId(null);
+          return;
+        }
+        if (showRecipeModal !== null) {
+          setShowRecipeModal(null);
+          setFreeTextDraft("");
+        }
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [viewingRecipeId, showRecipeModal]);
 
   // Hjälpare: spara aktuell veckas activeDayIndices in i plans
   const persistActiveDaysForWeek = (newActive: number[]) => {
@@ -509,7 +531,10 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
                 </div>
 
                 {recipe ? (
-                  <div>
+                  <div
+                    onClick={() => setViewingRecipeId(recipe.id)}
+                    className="cursor-pointer"
+                  >
                     <h3 className="text-lg font-bold text-gray-900 leading-tight mb-1">
                       {recipe.name}
                     </h3>
@@ -627,6 +652,28 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
                 </button>
               ))}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Recipe Viewer Modal */}
+      {viewingRecipeId !== null && (
+        <div
+          className="fixed inset-0 z-[60] bg-black/50 backdrop-blur-sm animate-fadeIn"
+          onClick={() => setViewingRecipeId(null)}
+        >
+          <div
+            className="h-full max-w-lg mx-auto bg-white shadow-2xl overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <RecipeViewer
+              recipeId={viewingRecipeId}
+              onClose={() => setViewingRecipeId(null)}
+              onStartCooking={(recipeId) => {
+                console.log("start cooking", recipeId);
+                setViewingRecipeId(null);
+              }}
+            />
           </div>
         </div>
       )}

@@ -3,6 +3,7 @@ import { HashRouter, Routes, Route, Link, useLocation } from "react-router-dom";
 import { Recipe, WeekPlan, DayPlan } from "./types";
 import MealPlanner from "./components/MealPlanner";
 import RecipeList from "./components/RecipeList";
+import RecipeContentEditor from "./components/RecipeContentEditor";
 import Login from "./components/Login";
 import { supabase } from "./supabaseClient";
 
@@ -33,7 +34,7 @@ const NavLink: React.FC<{ to: string; children: React.ReactNode }> = ({
   return (
     <Link
       to={to}
-      className={`flex-1 text-center py-4 text-sm font-semibold transition-colors ${
+      className={`flex-1 min-w-0 text-center py-4 px-3 text-sm font-semibold whitespace-nowrap transition-colors ${
         isActive
           ? "text-emerald-600 border-t-2 border-emerald-600"
           : "text-gray-500 hover:text-gray-800"
@@ -137,6 +138,7 @@ async function updateLastCookedUpdates(
 /* ---- Week plans ---- */
 
 const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
+const NAV_HEIGHT_PX = 80;
 
 function normalizeActiveDays(v: any): number[] {
   if (!Array.isArray(v)) return ALL_DAYS;
@@ -399,6 +401,12 @@ const App: React.FC = () => {
     }
   };
 
+  const handleRefreshRecipes = async (): Promise<Recipe[]> => {
+    const r = await fetchRecipesFromSupabase();
+    setRecipes(r);
+    return r;
+  };
+
   const handleUpdatePlans = async (newPlans: WeekPlan[]) => {
     const normalized = newPlans.map((p) => ({
       ...p,
@@ -447,7 +455,7 @@ const App: React.FC = () => {
 
   return (
     <HashRouter>
-      <div className="min-h-screen flex flex-col max-w-lg mx-auto bg-white shadow-xl relative pb-20 md:pb-0">
+      <div className="min-h-screen flex flex-col max-w-lg mx-auto bg-white shadow-xl relative">
         <header className="px-6 pt-8 pb-4 bg-white sticky top-0 z-10 border-b border-gray-100">
           <h1 className="text-2xl font-bold text-gray-900 tracking-tight">
             Matplaneraren
@@ -455,7 +463,10 @@ const App: React.FC = () => {
           <p className="text-sm text-gray-500">Planera smart, ät gott.</p>
         </header>
 
-        <main className="flex-1 overflow-y-auto px-4 py-6">
+        <main
+          className="flex-1 overflow-y-auto px-4 pt-6 pb-[var(--nav-height)]"
+          style={{ "--nav-height": `${NAV_HEIGHT_PX}px` } as React.CSSProperties}
+        >
           <Routes>
             <Route
               path="/"
@@ -476,6 +487,17 @@ const App: React.FC = () => {
                   recipes={recipes}
                   onUpdateRecipes={handleUpdateRecipes}
                   onDeleteRecipe={handleDeleteRecipe}
+                  onRefreshRecipes={handleRefreshRecipes}
+                />
+              }
+            />
+            <Route
+              path="/recipes/:id/content"
+              element={
+                <RecipeContentEditor
+                  onRefreshRecipes={async () => {
+                    await handleRefreshRecipes();
+                  }}
                 />
               }
             />
