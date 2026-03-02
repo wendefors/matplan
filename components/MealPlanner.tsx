@@ -560,7 +560,7 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
                 className="group bg-white p-5 rounded-2xl border border-gray-100 shadow-sm hover:border-emerald-200 transition-colors"
               >
                 <div className="flex justify-between items-start mb-3">
-                  <span className="text-sm font-bold text-emerald-600 uppercase tracking-wider">
+                  <span className="text-xs font-bold text-emerald-600 uppercase tracking-wider">
                     {SWEDISH_DAYS[dayIdx]}
                   </span>
 
@@ -665,25 +665,25 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
 
                 {recipe ? (
                   <div>
-                    <h3 className="text-lg font-bold text-gray-900 leading-tight mb-1">
+                    <h3 className="text-base font-bold text-gray-900 leading-tight mb-1">
                       {recipe.name}
                     </h3>
                     <div className="flex flex-wrap gap-2 items-center">
-                      <span className="text-[10px] bg-emerald-50 text-emerald-600 px-1.5 py-0.5 rounded font-bold uppercase tracking-tighter">
+                      <span className="text-[9px] bg-emerald-50 text-emerald-600 px-1.5 py-0.5 rounded font-bold uppercase tracking-tighter">
                         {recipe.category}
                       </span>
-                      <span className="text-[10px] text-gray-400">
+                      <span className="text-[9px] text-gray-400">
                         Lagad: {formatDate(recipe.lastCooked)}
                       </span>
                     </div>
                   </div>
                 ) : freeText.length > 0 ? (
                   <div>
-                    <h3 className="text-lg font-bold text-gray-900 leading-tight mb-1">
+                    <h3 className="text-base font-bold text-gray-900 leading-tight mb-1">
                       {freeText}
                     </h3>
                     <div className="flex flex-wrap gap-2 items-center">
-                      <span className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded font-bold uppercase tracking-tighter">
+                      <span className="text-[9px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded font-bold uppercase tracking-tighter">
                         Fritext
                       </span>
                     </div>

@@ -21,6 +21,11 @@ type SummedIngredientRow = {
   amount: number;
 };
 
+type UnsummedIngredientRow = {
+  id: string;
+  label: string;
+};
+
 const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
 const LAST_SELECTED_WEEK_KEY = "matplaneraren_selected_week_v1";
 
@@ -239,7 +244,7 @@ const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
 
   const baseIngredients = useMemo(() => {
     const summed = new Map<string, SummedIngredientRow>();
-    const unsummed: { label: string; dayId: number }[] = [];
+    const unsummed: UnsummedIngredientRow[] = [];
 
     for (const entry of loadedEntries) {
       if (!entry.full || entry.full.ingredients.length === 0) continue;
@@ -250,9 +255,10 @@ const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
 
       for (const ingredient of entry.full.ingredients) {
         if (ingredient.amount === null) {
+          const label = [ingredient.unit, ingredient.name].filter(Boolean).join(" ").trim();
           unsummed.push({
-            dayId: entry.dayId,
-            label: [ingredient.unit, ingredient.name].filter(Boolean).join(" ").trim(),
+            id: `unsummed-${entry.dayId}-${unsummed.length}-${normalizeKeyPart(label)}`,
+            label,
           });
           continue;
         }
@@ -319,6 +325,11 @@ const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
   const displayedIngredients = useMemo(
     () => summedIngredients.filter((row) => !removedIngredientIds[row.id]),
     [summedIngredients, removedIngredientIds]
+  );
+
+  const displayedUnsummedIngredients = useMemo(
+    () => baseIngredients.unsummed.filter((row) => !removedIngredientIds[row.id]),
+    [baseIngredients.unsummed, removedIngredientIds]
   );
 
   const missingRecipeContent = useMemo(
@@ -498,7 +509,7 @@ const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
           Dra en ingrediensrad ovanpå en annan för att slå ihop dem lokalt i listan.
         </p>
         {mergeError && <p className="text-sm text-amber-700">{mergeError}</p>}
-        {displayedIngredients.length === 0 && baseIngredients.unsummed.length === 0 ? (
+        {displayedIngredients.length === 0 && displayedUnsummedIngredients.length === 0 ? (
           <p className="text-sm text-gray-500">Inga ingredienser kunde räknas fram.</p>
         ) : (
           <>
@@ -578,15 +589,29 @@ const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
                 ))}
               </div>
             )}
-            {baseIngredients.unsummed.length > 0 && (
-              <div className="pt-2 border-t border-gray-100 space-y-2">
-                <p className="text-xs font-bold uppercase tracking-widest text-gray-400">
-                  Osummerat underlag
-                </p>
-                {baseIngredients.unsummed.map((ingredient, index) => (
-                  <p key={`${ingredient.dayId}-${index}`} className="text-sm text-gray-600">
-                    {ingredient.label}
-                  </p>
+            {displayedUnsummedIngredients.length > 0 && (
+              <div className="space-y-2">
+                {displayedUnsummedIngredients.map((ingredient) => (
+                  <div
+                    key={ingredient.id}
+                    className="flex items-center justify-between gap-3 rounded-xl border border-gray-100 px-3 py-3"
+                  >
+                    <span className="text-gray-900 font-medium">{ingredient.label}</span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setRemovedIngredientIds((prev) => ({
+                          ...prev,
+                          [ingredient.id]: true,
+                        }))
+                      }
+                      className="h-9 w-9 rounded-lg border border-gray-200 bg-white text-gray-500 font-bold shrink-0"
+                      aria-label={`Ta bort ${ingredient.label} från inköpslistan`}
+                      title="Ta bort från listan"
+                    >
+                      ×
+                    </button>
+                  </div>
                 ))}
               </div>
             )}

@@ -163,7 +163,7 @@ const RecipeViewer: React.FC = () => {
                   .map((ingredient) => (
                     <li
                       key={ingredient.id ?? `${ingredient.sortOrder}-${ingredient.name}`}
-                      className="text-lg leading-tight text-gray-800 [@media(orientation:landscape)]:text-base"
+                      className="text-lg leading-tight text-gray-800 [@media(orientation:landscape)]:text-sm"
                     >
                       {ingredient.amount !== null
                         ? `${formatScaledAmount(ingredient.amount, servingFactor)} `
@@ -223,7 +223,7 @@ const RecipeViewer: React.FC = () => {
                           className="mt-1 h-5 w-5"
                         />
                         <span
-                          className={`text-lg leading-tight [@media(orientation:landscape)]:text-base ${
+                          className={`text-lg leading-tight [@media(orientation:landscape)]:text-sm ${
                             isCompleted ? "line-through text-gray-400" : "text-gray-800"
                           }`}
                         >
