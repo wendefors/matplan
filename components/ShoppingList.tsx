@@ -411,7 +411,7 @@ const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
   return (
     <div className="space-y-6 animate-fadeIn pb-24">
       <section className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
-        <label className="block text-sm font-semibold text-gray-700 mb-2">Välj vecka</label>
+        <label className="block text-xs font-semibold text-gray-700 mb-2">Välj vecka</label>
         <div className="flex items-center gap-2">
           <button
             type="button"
@@ -439,13 +439,13 @@ const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
       </section>
 
       <section className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 space-y-3">
-        <h2 className="text-sm font-bold text-gray-500 uppercase tracking-widest">
+        <h2 className="text-xs font-bold text-gray-500 uppercase tracking-widest">
           Veckans valda rätter
         </h2>
-        {isLoading && <p className="text-sm text-gray-500">Laddar receptunderlag...</p>}
-        {error && <p className="text-sm text-red-600">{error}</p>}
+        {isLoading && <p className="text-xs text-gray-500">Laddar receptunderlag...</p>}
+        {error && <p className="text-xs text-red-600">{error}</p>}
         {!isLoading && loadedEntries.length === 0 && freeTextDays.length === 0 && (
-          <p className="text-sm text-gray-500">Inga valda rätter för veckan.</p>
+          <p className="text-xs text-gray-500">Inga valda rätter för veckan.</p>
         )}
         {loadedEntries.map((entry) => (
           <div
@@ -457,14 +457,14 @@ const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
                 <p className="text-[10px] font-bold uppercase tracking-widest text-gray-500">
                   Dag {entry.dayId + 1}
                 </p>
-                <h3 className="font-bold text-gray-900 truncate">{entry.recipe.name}</h3>
+                <h3 className="text-sm font-bold text-gray-900 truncate">{entry.recipe.name}</h3>
               </div>
               <span className="text-[10px] bg-white border border-gray-200 text-gray-500 px-2 py-1 rounded-full font-bold uppercase">
                 {entry.recipe.category}
               </span>
             </div>
             <div className="flex items-center justify-between gap-3">
-              <span className="text-sm text-gray-500">
+              <span className="text-xs text-gray-500">
                 Grund: {entry.recipe.baseServings} portioner
               </span>
               <div className="flex items-center gap-2">
@@ -480,7 +480,7 @@ const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
                 >
                   -
                 </button>
-                <span className="min-w-12 text-center text-sm font-semibold text-gray-900">
+                <span className="min-w-12 text-center text-xs font-semibold text-gray-900">
                   {servingsByDay[entry.dayId] || entry.recipe.baseServings}
                 </span>
                 <button
@@ -502,15 +502,15 @@ const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
       </section>
 
       <section className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 space-y-3">
-        <h2 className="text-sm font-bold text-gray-500 uppercase tracking-widest">
+        <h2 className="text-xs font-bold text-gray-500 uppercase tracking-widest">
           Summerade ingredienser
         </h2>
         <p className="text-xs text-gray-500">
           Dra en ingrediensrad ovanpå en annan för att slå ihop dem lokalt i listan.
         </p>
-        {mergeError && <p className="text-sm text-amber-700">{mergeError}</p>}
+        {mergeError && <p className="text-xs text-amber-700">{mergeError}</p>}
         {displayedIngredients.length === 0 && displayedUnsummedIngredients.length === 0 ? (
-          <p className="text-sm text-gray-500">Inga ingredienser kunde räknas fram.</p>
+          <p className="text-xs text-gray-500">Inga ingredienser kunde räknas fram.</p>
         ) : (
           <>
             {displayedIngredients.length > 0 && (
@@ -564,10 +564,10 @@ const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
                       >
                         ≡
                       </button>
-                      <span className="text-gray-900 font-medium truncate">{ingredient.name}</span>
+                      <span className="text-sm text-gray-900 font-medium truncate">{ingredient.name}</span>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
-                      <span className="text-gray-500 text-sm whitespace-nowrap">
+                      <span className="text-xs text-gray-500 whitespace-nowrap">
                         {formatAmount(ingredient.amount)} {ingredient.unit ?? ""}
                       </span>
                       <button
@@ -596,7 +596,7 @@ const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
                     key={ingredient.id}
                     className="flex items-center justify-between gap-3 rounded-xl border border-gray-100 px-3 py-3"
                   >
-                    <span className="text-gray-900 font-medium">{ingredient.label}</span>
+                    <span className="text-sm text-gray-900 font-medium">{ingredient.label}</span>
                     <button
                       type="button"
                       onClick={() =>
@@ -620,15 +620,15 @@ const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
       </section>
 
       <section className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 space-y-3">
-        <h2 className="text-sm font-bold text-gray-500 uppercase tracking-widest">
+        <h2 className="text-xs font-bold text-gray-500 uppercase tracking-widest">
           Rätter utan receptinnehåll
         </h2>
         {missingRecipeContent.length === 0 ? (
-          <p className="text-sm text-gray-500">Alla valda recept har ingrediensunderlag.</p>
+          <p className="text-xs text-gray-500">Alla valda recept har ingrediensunderlag.</p>
         ) : (
           <div className="space-y-2">
             {missingRecipeContent.map((entry) => (
-              <div key={`${entry.dayId}-${entry.recipe.id}`} className="text-sm text-gray-700">
+              <div key={`${entry.dayId}-${entry.recipe.id}`} className="text-xs text-gray-700">
                 <span className="font-semibold">{entry.recipe.name}</span>
                 {entry.error ? ` - ${entry.error}` : " - saknar ingredienser"}
               </div>
@@ -638,15 +638,15 @@ const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
       </section>
 
       <section className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 space-y-3">
-        <h2 className="text-sm font-bold text-gray-500 uppercase tracking-widest">
+        <h2 className="text-xs font-bold text-gray-500 uppercase tracking-widest">
           Fritext / manuellt
         </h2>
         {freeTextDays.length === 0 ? (
-          <p className="text-sm text-gray-500">Ingen fritext denna vecka.</p>
+          <p className="text-xs text-gray-500">Ingen fritext denna vecka.</p>
         ) : (
           <div className="space-y-2">
             {freeTextDays.map((day) => (
-              <p key={day.dayId} className="text-sm text-gray-700">
+              <p key={day.dayId} className="text-xs text-gray-700">
                 {day.text}
               </p>
             ))}
