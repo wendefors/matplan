@@ -87,7 +87,7 @@ const RecipeViewer: React.FC = () => {
   return (
     <div className="fixed inset-0 z-40 h-[100dvh] overflow-hidden bg-white flex flex-col">
       <header
-        className="shrink-0 bg-white border-b border-gray-100 px-4 pb-3 pt-3"
+        className="shrink-0 bg-white border-b border-gray-100 px-4 pb-3 pt-3 [@media(orientation:landscape)]:hidden"
         style={{ paddingTop: "calc(0.75rem + env(safe-area-inset-top, 0px))" }}
       >
         <div className="flex items-center gap-3">
@@ -163,7 +163,7 @@ const RecipeViewer: React.FC = () => {
                   .map((ingredient) => (
                     <li
                       key={ingredient.id ?? `${ingredient.sortOrder}-${ingredient.name}`}
-                      className="text-2xl leading-tight text-gray-800"
+                      className="text-xl leading-tight text-gray-800"
                     >
                       {ingredient.amount !== null
                         ? `${formatScaledAmount(ingredient.amount, servingFactor)} `
@@ -223,7 +223,7 @@ const RecipeViewer: React.FC = () => {
                           className="mt-1 h-5 w-5"
                         />
                         <span
-                          className={`text-2xl leading-tight ${
+                          className={`text-xl leading-tight ${
                             isCompleted ? "line-through text-gray-400" : "text-gray-800"
                           }`}
                         >
