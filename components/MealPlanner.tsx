@@ -28,6 +28,90 @@ function getCurrentIsoWeek(): string {
   return `${d.getUTCFullYear()}-W${String(weekNo).padStart(2, "0")}`;
 }
 
+function isoWeekToMonday(weekIdentifier: string): Date | null {
+  const match = /^(\d{4})-W(\d{2})$/.exec(weekIdentifier);
+  if (!match) return null;
+
+  const year = Number(match[1]);
+  const week = Number(match[2]);
+  const jan4 = new Date(Date.UTC(year, 0, 4));
+  const jan4IsoDow = jan4.getUTCDay() || 7;
+  const week1Monday = new Date(jan4);
+  week1Monday.setUTCDate(jan4.getUTCDate() - (jan4IsoDow - 1));
+
+  const monday = new Date(week1Monday);
+  monday.setUTCDate(week1Monday.getUTCDate() + (week - 1) * 7);
+  return monday;
+}
+
+function dateToIsoWeek(date: Date): string {
+  const d = new Date(
+    Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate())
+  );
+  const dayNum = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  const weekNo = Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+  return `${d.getUTCFullYear()}-W${String(weekNo).padStart(2, "0")}`;
+}
+
+function shiftIsoWeek(weekIdentifier: string, deltaWeeks: number): string {
+  const monday = isoWeekToMonday(weekIdentifier);
+  if (!monday) return weekIdentifier;
+  monday.setUTCDate(monday.getUTCDate() + deltaWeeks * 7);
+  return dateToIsoWeek(monday);
+}
+
+function getRecencyBonus(lastCooked: string | null): number {
+  if (!lastCooked) return 20;
+
+  const lastCookedDate = new Date(lastCooked);
+  if (Number.isNaN(lastCookedDate.getTime())) return 0;
+
+  const diffDays = Math.floor(
+    (Date.now() - lastCookedDate.getTime()) / (1000 * 60 * 60 * 24)
+  );
+
+  if (!Number.isFinite(diffDays)) return 0;
+  return Math.max(0, Math.min(diffDays, 30));
+}
+
+function pickWeightedRecipe(
+  candidates: Recipe[],
+  excludeCategories: Set<string>
+): Recipe | null {
+  if (candidates.length === 0) return null;
+
+  const weightedCandidates = candidates.map((recipe) => {
+    let score = 100 + getRecencyBonus(recipe.lastCooked);
+
+    if (excludeCategories.has(recipe.category)) {
+      score -= 40;
+    }
+
+    return {
+      recipe,
+      score: Math.max(1, score),
+    };
+  });
+
+  const totalWeight = weightedCandidates.reduce(
+    (sum, candidate) => sum + candidate.score,
+    0
+  );
+
+  let randomWeight = Math.random() * totalWeight;
+
+  for (const candidate of weightedCandidates) {
+    randomWeight -= candidate.score;
+    if (randomWeight <= 0) {
+      return candidate.recipe;
+    }
+  }
+
+  return weightedCandidates[weightedCandidates.length - 1].recipe;
+}
+
 function isoWeekDayToISODate(weekIdentifier: string, dayId: number): string {
   // weekIdentifier: "2026-W02"
   const match = /^(\d{4})-W(\d{2})$/.exec(weekIdentifier);
@@ -209,30 +293,22 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
   const pickSmartRecipe = (excludeIds: Set<number>, excludeCategories: Set<string>) => {
     if (recipes.length === 0) return null;
 
-    const candidates = recipes.map((r) => {
-      let score = 100;
+    // Först: använd aldrig ett recept som redan ligger i veckan om vi har alternativ.
+    const unusedRecipes = recipes.filter((recipe) => !excludeIds.has(recipe.id));
+    if (unusedRecipes.length === 0) {
+      return pickWeightedRecipe(recipes, excludeCategories);
+    }
 
-      if (excludeIds.has(r.id)) score -= 95;
-      if (excludeCategories.has(r.category)) score -= 80;
+    // Sedan: försök undvika kategori-krockar, men fall tillbaka om det behövs.
+    const unusedAndNewCategory = unusedRecipes.filter(
+      (recipe) => !excludeCategories.has(recipe.category)
+    );
 
-      if (!r.lastCooked) {
-        score += 20;
-      } else {
-        const lastCookedDate = new Date(r.lastCooked);
-        const diffDays = Math.floor(
-          (Date.now() - lastCookedDate.getTime()) / (1000 * 60 * 60 * 24)
-        );
-        score += Math.min(diffDays, 30);
-      }
+    if (unusedAndNewCategory.length > 0) {
+      return pickWeightedRecipe(unusedAndNewCategory, excludeCategories);
+    }
 
-      return { recipe: r, score: Math.max(score, 1) };
-    });
-
-    candidates.sort((a, b) => b.score - a.score);
-
-    // Ta top 20% (minst 1) så det känns "smart" men inte förutsägbart
-    const topCandidates = candidates.slice(0, Math.max(1, Math.floor(candidates.length * 0.2)));
-    return topCandidates[Math.floor(Math.random() * topCandidates.length)].recipe;
+    return pickWeightedRecipe(unusedRecipes, excludeCategories);
   };
 
   /**
@@ -364,12 +440,32 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
       {/* Week Selector */}
       <section className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
         <label className="block text-sm font-semibold text-gray-700 mb-2">Välj vecka</label>
-        <input
-          type="week"
-          value={selectedWeek}
-          onChange={(e) => setSelectedWeek(e.target.value)}
-          className="w-full p-3 bg-gray-50 border-none rounded-xl focus:ring-2 focus:ring-emerald-500 font-medium"
-        />
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setSelectedWeek((prev) => shiftIsoWeek(prev, -1))}
+            className="shrink-0 p-3 bg-gray-100 rounded-xl text-gray-700 font-bold hover:bg-gray-200 transition-colors"
+            aria-label="Föregående vecka"
+            title="Föregående vecka"
+          >
+            ←
+          </button>
+          <input
+            type="week"
+            value={selectedWeek}
+            onChange={(e) => setSelectedWeek(e.target.value)}
+            className="w-full p-3 bg-gray-50 border-none rounded-xl focus:ring-2 focus:ring-emerald-500 font-medium"
+          />
+          <button
+            type="button"
+            onClick={() => setSelectedWeek((prev) => shiftIsoWeek(prev, 1))}
+            className="shrink-0 p-3 bg-gray-100 rounded-xl text-gray-700 font-bold hover:bg-gray-200 transition-colors"
+            aria-label="Nästa vecka"
+            title="Nästa vecka"
+          >
+            →
+          </button>
+        </div>
       </section>
 
       {/* Day Checklist */}
