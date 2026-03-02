@@ -36,6 +36,14 @@ const RecipeContentEditor: React.FC<RecipeContentEditorProps> = ({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, []);
+
+  useEffect(() => {
     if (!Number.isFinite(recipeId)) {
       setError("Ogiltigt recept-id.");
       setIsLoading(false);
@@ -166,55 +174,64 @@ const RecipeContentEditor: React.FC<RecipeContentEditorProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-40 bg-white flex flex-col">
-      <header className="sticky top-0 z-10 bg-white border-b border-gray-100 px-4 py-3">
-        <div className="flex items-center justify-between gap-3">
+    <div className="fixed inset-0 z-40 bg-gray-50 flex flex-col">
+      <header
+        className="shrink-0 border-b border-gray-200 bg-white/95 backdrop-blur px-4 pb-3 pt-3"
+        style={{ paddingTop: "calc(0.75rem + env(safe-area-inset-top, 0px))" }}
+      >
+        <div className="mx-auto flex w-full max-w-3xl items-center justify-between gap-3">
           <button
             type="button"
             onClick={goBack}
-            className="text-sm font-semibold text-gray-600"
+            className="rounded-xl bg-gray-100 px-3 py-2 text-sm font-semibold text-gray-700 shrink-0"
           >
             Tillbaka
           </button>
-          <h2 className="text-base font-bold text-gray-900 truncate">
+          <h2 className="text-sm font-bold text-gray-900 truncate text-center">
             Receptinnehåll: {recipeName || "Recept"}
           </h2>
-          <div className="w-12" />
+          <div className="w-20 shrink-0" />
         </div>
       </header>
 
-      <main className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 py-4 space-y-5">
-        {isLoading && (
-          <div className="rounded-2xl bg-gray-50 border border-gray-100 p-4 text-sm text-gray-500">
-            Laddar receptinnehåll...
-          </div>
-        )}
+      <main
+        className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-3 py-3"
+        style={{ WebkitOverflowScrolling: "touch" }}
+      >
+        <div className="mx-auto w-full max-w-3xl space-y-4">
+          {isLoading && (
+            <div className="rounded-2xl bg-white border border-gray-200 p-4 text-sm text-gray-500 shadow-sm">
+              Laddar receptinnehåll...
+            </div>
+          )}
 
-        {error && (
-          <div className="rounded-2xl bg-red-50 border border-red-100 p-4 text-sm text-red-700">
-            {error}
-          </div>
-        )}
+          {error && (
+            <div className="rounded-2xl bg-red-50 border border-red-100 p-4 text-sm text-red-700">
+              {error}
+            </div>
+          )}
 
-        {!isLoading && (
-          <>
-            <section className="bg-white border border-gray-100 rounded-2xl p-4 shadow-sm space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-bold uppercase tracking-widest text-gray-500">
-                  Ingredienser
-                </h3>
-                <button
-                  type="button"
-                  onClick={addIngredient}
-                  className="rounded-lg bg-gray-100 px-3 py-1 text-xs font-semibold"
-                >
-                  Lägg till
-                </button>
-              </div>
-              <div className="space-y-3">
-                {ingredients.map((ingredient, index) => (
-                  <div key={`${index}-${ingredient.sortOrder}`} className="rounded-xl border border-gray-100 p-3 space-y-2">
-                    <div className="grid gap-2 md:grid-cols-4">
+          {!isLoading && (
+            <div className="grid gap-4 lg:grid-cols-2">
+              <section className="bg-white border border-gray-200 rounded-2xl p-3 shadow-sm space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <h3 className="text-xs font-bold uppercase tracking-[0.18em] text-gray-500">
+                    Ingredienser
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={addIngredient}
+                    className="rounded-lg bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700"
+                  >
+                    Lägg till
+                  </button>
+                </div>
+                <div className="space-y-2">
+                  {ingredients.map((ingredient, index) => (
+                    <div
+                      key={`${index}-${ingredient.sortOrder}`}
+                      className="rounded-xl border border-gray-100 bg-gray-50 p-3 space-y-2"
+                    >
                       <input
                         value={ingredient.name}
                         onChange={(e) =>
@@ -224,143 +241,164 @@ const RecipeContentEditor: React.FC<RecipeContentEditorProps> = ({
                             )
                           )
                         }
-                        placeholder="Namn"
-                        className="rounded-lg border border-gray-200 p-2"
+                        placeholder="Ingrediens"
+                        className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm"
                       />
-                      <input
-                        value={ingredient.amount}
-                        onChange={(e) =>
-                          setIngredients((prev) =>
-                            prev.map((row, i) =>
-                              i === index ? { ...row, amount: e.target.value } : row
-                            )
-                          )
-                        }
-                        placeholder="Mängd"
-                        className="rounded-lg border border-gray-200 p-2"
-                      />
-                      <input
-                        value={ingredient.unit}
-                        onChange={(e) =>
-                          setIngredients((prev) =>
-                            prev.map((row, i) =>
-                              i === index ? { ...row, unit: e.target.value } : row
-                            )
-                          )
-                        }
-                        placeholder="Enhet"
-                        className="rounded-lg border border-gray-200 p-2"
-                      />
-                      <label className="flex items-center gap-2 text-sm text-gray-700">
+                      <div className="grid grid-cols-[minmax(0,0.9fr)_minmax(0,0.9fr)_auto] gap-2 items-center">
                         <input
-                          type="checkbox"
-                          checked={ingredient.optional}
+                          value={ingredient.amount}
                           onChange={(e) =>
                             setIngredients((prev) =>
                               prev.map((row, i) =>
-                                i === index
-                                  ? { ...row, optional: e.target.checked }
-                                  : row
+                                i === index ? { ...row, amount: e.target.value } : row
                               )
                             )
                           }
+                          placeholder="Mängd"
+                          className="min-w-0 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm"
                         />
-                        Valfritt
-                      </label>
+                        <input
+                          value={ingredient.unit}
+                          onChange={(e) =>
+                            setIngredients((prev) =>
+                              prev.map((row, i) =>
+                                i === index ? { ...row, unit: e.target.value } : row
+                              )
+                            )
+                          }
+                          placeholder="Enhet"
+                          className="min-w-0 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm"
+                        />
+                        <label className="flex items-center gap-2 text-xs text-gray-700 whitespace-nowrap">
+                          <input
+                            type="checkbox"
+                            checked={ingredient.optional}
+                            onChange={(e) =>
+                              setIngredients((prev) =>
+                                prev.map((row, i) =>
+                                  i === index
+                                    ? { ...row, optional: e.target.checked }
+                                    : row
+                                )
+                              )
+                            }
+                          />
+                          Valfritt
+                        </label>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => moveIngredient(index, -1)}
+                          className="rounded-lg bg-white border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-700"
+                        >
+                          Upp
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => moveIngredient(index, 1)}
+                          className="rounded-lg bg-white border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-700"
+                        >
+                          Ner
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => removeIngredient(index)}
+                          className="rounded-lg bg-red-50 border border-red-100 text-red-600 px-3 py-1.5 text-xs font-semibold"
+                        >
+                          Ta bort
+                        </button>
+                      </div>
                     </div>
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        onClick={() => moveIngredient(index, -1)}
-                        className="rounded-lg bg-gray-100 px-3 py-1 text-xs font-semibold"
-                      >
-                        Upp
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => moveIngredient(index, 1)}
-                        className="rounded-lg bg-gray-100 px-3 py-1 text-xs font-semibold"
-                      >
-                        Ner
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => removeIngredient(index)}
-                        className="rounded-lg bg-red-50 text-red-600 px-3 py-1 text-xs font-semibold"
-                      >
-                        Ta bort
-                      </button>
+                  ))}
+                  {ingredients.length === 0 && (
+                    <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-3 py-4 text-sm text-gray-500">
+                      Inga ingredienser ännu.
                     </div>
-                  </div>
-                ))}
-              </div>
-            </section>
+                  )}
+                </div>
+              </section>
 
-            <section className="bg-white border border-gray-100 rounded-2xl p-4 shadow-sm space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-bold uppercase tracking-widest text-gray-500">
-                  Steps
-                </h3>
-                <button
-                  type="button"
-                  onClick={addStep}
-                  className="rounded-lg bg-gray-100 px-3 py-1 text-xs font-semibold"
-                >
-                  Lägg till
-                </button>
-              </div>
-              <div className="space-y-3">
-                {steps.map((step, index) => (
-                  <div key={`${index}-${step.stepOrder}`} className="rounded-xl border border-gray-100 p-3 space-y-2">
-                    <textarea
-                      value={step.text}
-                      onChange={(e) =>
-                        setSteps((prev) =>
-                          prev.map((row, i) =>
-                            i === index ? { ...row, text: e.target.value } : row
+              <section className="bg-white border border-gray-200 rounded-2xl p-3 shadow-sm space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <h3 className="text-xs font-bold uppercase tracking-[0.18em] text-gray-500">
+                    Steg
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={addStep}
+                    className="rounded-lg bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700"
+                  >
+                    Lägg till
+                  </button>
+                </div>
+                <div className="space-y-2">
+                  {steps.map((step, index) => (
+                    <div
+                      key={`${index}-${step.stepOrder}`}
+                      className="rounded-xl border border-gray-100 bg-gray-50 p-3 space-y-2"
+                    >
+                      <div className="text-[11px] font-bold uppercase tracking-widest text-gray-400">
+                        Steg {index + 1}
+                      </div>
+                      <textarea
+                        value={step.text}
+                        onChange={(e) =>
+                          setSteps((prev) =>
+                            prev.map((row, i) =>
+                              i === index ? { ...row, text: e.target.value } : row
+                            )
                           )
-                        )
-                      }
-                      placeholder="Stegtext"
-                      className="w-full min-h-[90px] rounded-lg border border-gray-200 p-2"
-                    />
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        onClick={() => moveStep(index, -1)}
-                        className="rounded-lg bg-gray-100 px-3 py-1 text-xs font-semibold"
-                      >
-                        Upp
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => moveStep(index, 1)}
-                        className="rounded-lg bg-gray-100 px-3 py-1 text-xs font-semibold"
-                      >
-                        Ner
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => removeStep(index)}
-                        className="rounded-lg bg-red-50 text-red-600 px-3 py-1 text-xs font-semibold"
-                      >
-                        Ta bort
-                      </button>
+                        }
+                        placeholder="Beskriv steget"
+                        className="w-full min-h-[88px] rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm"
+                      />
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => moveStep(index, -1)}
+                          className="rounded-lg bg-white border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-700"
+                        >
+                          Upp
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => moveStep(index, 1)}
+                          className="rounded-lg bg-white border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-700"
+                        >
+                          Ner
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => removeStep(index)}
+                          className="rounded-lg bg-red-50 border border-red-100 text-red-600 px-3 py-1.5 text-xs font-semibold"
+                        >
+                          Ta bort
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                ))}
-              </div>
-            </section>
-          </>
-        )}
+                  ))}
+                  {steps.length === 0 && (
+                    <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-3 py-4 text-sm text-gray-500">
+                      Inga steg ännu.
+                    </div>
+                  )}
+                </div>
+              </section>
+            </div>
+          )}
+        </div>
       </main>
 
-      <footer className="sticky bottom-0 bg-white border-t border-gray-100 px-4 py-3">
-        <div className="flex gap-2">
+      <footer
+        className="shrink-0 border-t border-gray-200 bg-white/95 backdrop-blur px-4 pb-3 pt-3"
+        style={{ paddingBottom: "calc(0.75rem + env(safe-area-inset-bottom, 0px))" }}
+      >
+        <div className="mx-auto flex w-full max-w-3xl gap-2">
           <button
             type="button"
             onClick={goBack}
-            className="flex-1 rounded-xl border border-gray-200 py-3 font-semibold text-gray-700"
+            className="flex-1 rounded-xl border border-gray-200 bg-white py-3 text-sm font-semibold text-gray-700"
           >
             Tillbaka
           </button>
@@ -368,7 +406,7 @@ const RecipeContentEditor: React.FC<RecipeContentEditorProps> = ({
             type="button"
             onClick={handleSave}
             disabled={isSaving || isLoading}
-            className="flex-1 rounded-xl bg-emerald-600 text-white py-3 font-semibold disabled:opacity-60"
+            className="flex-1 rounded-xl bg-emerald-600 text-white py-3 text-sm font-semibold disabled:opacity-60"
           >
             {isSaving ? "Sparar..." : "Spara"}
           </button>
