@@ -105,6 +105,7 @@ const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
   const [loadedEntries, setLoadedEntries] = useState<LoadedRecipeEntry[]>([]);
   const [servingsByDay, setServingsByDay] = useState<Record<number, number>>({});
   const [manualMergeMap, setManualMergeMap] = useState<Record<string, string>>({});
+  const [removedIngredientIds, setRemovedIngredientIds] = useState<Record<string, true>>({});
   const [draggingIngredientId, setDraggingIngredientId] = useState<string | null>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -283,6 +284,7 @@ const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
 
   useEffect(() => {
     setManualMergeMap({});
+    setRemovedIngredientIds({});
     setDraggingIngredientId(null);
     setDropTargetId(null);
     setMergeError(null);
@@ -314,6 +316,11 @@ const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
     return Array.from(rowMap.values()).sort((a, b) => a.name.localeCompare(b.name, "sv"));
   }, [baseIngredients.summed, manualMergeMap]);
 
+  const displayedIngredients = useMemo(
+    () => summedIngredients.filter((row) => !removedIngredientIds[row.id]),
+    [summedIngredients, removedIngredientIds]
+  );
+
   const missingRecipeContent = useMemo(
     () =>
       loadedEntries.filter(
@@ -331,8 +338,8 @@ const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
   const tryMergeIngredients = (sourceId: string, targetId: string) => {
     if (sourceId === targetId) return;
 
-    const sourceRow = summedIngredients.find((row) => row.id === sourceId);
-    const targetRow = summedIngredients.find((row) => row.id === targetId);
+    const sourceRow = displayedIngredients.find((row) => row.id === sourceId);
+    const targetRow = displayedIngredients.find((row) => row.id === targetId);
     if (!sourceRow || !targetRow) return;
 
     if (!canMergeIngredientRows(sourceRow, targetRow)) {
@@ -357,24 +364,38 @@ const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
     setDropTargetId(null);
   };
 
-  const handleTouchMove = (event: React.TouchEvent<HTMLDivElement>) => {
-    if (!draggingIngredientId) return;
+  useEffect(() => {
+    if (!draggingIngredientId || typeof window === "undefined") return;
 
-    const touch = event.touches[0];
-    if (!touch) return;
+    const handleWindowTouchMove = (event: TouchEvent) => {
+      const touch = event.touches[0];
+      if (!touch) return;
 
-    const element = document.elementFromPoint(touch.clientX, touch.clientY);
-    const dropElement = element?.closest("[data-ingredient-id]");
-    const nextDropTarget = dropElement?.getAttribute("data-ingredient-id") || null;
-    setDropTargetId(nextDropTarget === draggingIngredientId ? null : nextDropTarget);
-  };
+      const element = document.elementFromPoint(touch.clientX, touch.clientY);
+      const dropElement = element?.closest("[data-ingredient-id]");
+      const nextDropTarget = dropElement?.getAttribute("data-ingredient-id") || null;
 
-  const handleTouchEnd = () => {
-    if (draggingIngredientId && dropTargetId) {
-      tryMergeIngredients(draggingIngredientId, dropTargetId);
-    }
-    clearDragState();
-  };
+      setDropTargetId(nextDropTarget === draggingIngredientId ? null : nextDropTarget);
+      event.preventDefault();
+    };
+
+    const handleWindowTouchEnd = () => {
+      if (draggingIngredientId && dropTargetId) {
+        tryMergeIngredients(draggingIngredientId, dropTargetId);
+      }
+      clearDragState();
+    };
+
+    window.addEventListener("touchmove", handleWindowTouchMove, { passive: false });
+    window.addEventListener("touchend", handleWindowTouchEnd);
+    window.addEventListener("touchcancel", clearDragState);
+
+    return () => {
+      window.removeEventListener("touchmove", handleWindowTouchMove);
+      window.removeEventListener("touchend", handleWindowTouchEnd);
+      window.removeEventListener("touchcancel", clearDragState);
+    };
+  }, [draggingIngredientId, dropTargetId, displayedIngredients]);
 
   return (
     <div className="space-y-6 animate-fadeIn pb-24">
@@ -477,22 +498,16 @@ const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
           Dra en ingrediensrad ovanpå en annan för att slå ihop dem lokalt i listan.
         </p>
         {mergeError && <p className="text-sm text-amber-700">{mergeError}</p>}
-        {summedIngredients.length === 0 && baseIngredients.unsummed.length === 0 ? (
+        {displayedIngredients.length === 0 && baseIngredients.unsummed.length === 0 ? (
           <p className="text-sm text-gray-500">Inga ingredienser kunde räknas fram.</p>
         ) : (
           <>
-            {summedIngredients.length > 0 && (
+            {displayedIngredients.length > 0 && (
               <div className="space-y-2">
-                {summedIngredients.map((ingredient) => (
+                {displayedIngredients.map((ingredient) => (
                   <div
                     key={ingredient.id}
                     data-ingredient-id={ingredient.id}
-                    draggable
-                    onDragStart={() => {
-                      setMergeError(null);
-                      setDraggingIngredientId(ingredient.id);
-                      setDropTargetId(null);
-                    }}
                     onDragOver={(event) => {
                       if (!draggingIngredientId || draggingIngredientId === ingredient.id) {
                         return;
@@ -508,13 +523,6 @@ const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
                       clearDragState();
                     }}
                     onDragEnd={clearDragState}
-                    onTouchStart={() => {
-                      setMergeError(null);
-                      setDraggingIngredientId(ingredient.id);
-                      setDropTargetId(null);
-                    }}
-                    onTouchMove={handleTouchMove}
-                    onTouchEnd={handleTouchEnd}
                     className={`flex items-center justify-between gap-3 rounded-xl border px-3 py-3 transition-colors ${
                       dropTargetId === ingredient.id
                         ? "border-emerald-400 bg-emerald-50"
@@ -522,12 +530,50 @@ const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
                         ? "border-emerald-200 bg-gray-50"
                         : "border-gray-100"
                     }`}
-                    style={{ WebkitUserSelect: "none" }}
+                    style={{ WebkitUserSelect: "none", WebkitTouchCallout: "none" }}
                   >
-                    <span className="text-gray-900 font-medium">{ingredient.name}</span>
-                    <span className="text-gray-500 text-sm whitespace-nowrap">
-                      {formatAmount(ingredient.amount)} {ingredient.unit ?? ""}
-                    </span>
+                    <div className="flex items-center gap-3 min-w-0">
+                      <button
+                        type="button"
+                        draggable
+                        onDragStart={() => {
+                          setMergeError(null);
+                          setDraggingIngredientId(ingredient.id);
+                          setDropTargetId(null);
+                        }}
+                        onTouchStart={(event) => {
+                          event.preventDefault();
+                          setMergeError(null);
+                          setDraggingIngredientId(ingredient.id);
+                          setDropTargetId(null);
+                        }}
+                        className="shrink-0 h-9 w-9 rounded-lg border border-gray-200 bg-white text-gray-500 font-bold"
+                        aria-label={`Dra ${ingredient.name} för att slå ihop`}
+                        title="Dra för att slå ihop"
+                      >
+                        ≡
+                      </button>
+                      <span className="text-gray-900 font-medium truncate">{ingredient.name}</span>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="text-gray-500 text-sm whitespace-nowrap">
+                        {formatAmount(ingredient.amount)} {ingredient.unit ?? ""}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setRemovedIngredientIds((prev) => ({
+                            ...prev,
+                            [ingredient.id]: true,
+                          }))
+                        }
+                        className="h-9 w-9 rounded-lg border border-gray-200 bg-white text-gray-500 font-bold"
+                        aria-label={`Ta bort ${ingredient.name} från inköpslistan`}
+                        title="Ta bort från listan"
+                      >
+                        ×
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
