@@ -14,6 +14,13 @@ type LoadedRecipeEntry = {
   error: string | null;
 };
 
+type SummedIngredientRow = {
+  id: string;
+  name: string;
+  unit: string | null;
+  amount: number;
+};
+
 const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
 const LAST_SELECTED_WEEK_KEY = "matplaneraren_selected_week_v1";
 
@@ -65,6 +72,28 @@ function normalizeKeyPart(value: string | null): string {
   return (value ?? "").trim().toLowerCase();
 }
 
+function canMergeIngredientRows(
+  source: SummedIngredientRow,
+  target: SummedIngredientRow
+): boolean {
+  return normalizeKeyPart(source.unit) === normalizeKeyPart(target.unit);
+}
+
+function resolveMergeTarget(
+  rowId: string,
+  mergeMap: Record<string, string>
+): string {
+  let current = rowId;
+  const visited = new Set<string>([rowId]);
+
+  while (mergeMap[current] && !visited.has(mergeMap[current])) {
+    current = mergeMap[current];
+    visited.add(current);
+  }
+
+  return current;
+}
+
 const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
   const [selectedWeek, setSelectedWeek] = useState(() => {
     const stored =
@@ -75,8 +104,12 @@ const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
   });
   const [loadedEntries, setLoadedEntries] = useState<LoadedRecipeEntry[]>([]);
   const [servingsByDay, setServingsByDay] = useState<Record<number, number>>({});
+  const [manualMergeMap, setManualMergeMap] = useState<Record<string, string>>({});
+  const [draggingIngredientId, setDraggingIngredientId] = useState<string | null>(null);
+  const [dropTargetId, setDropTargetId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [mergeError, setMergeError] = useState<string | null>(null);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -203,11 +236,8 @@ const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
     };
   }, [recipeDays]);
 
-  const summableIngredients = useMemo(() => {
-    const summed = new Map<
-      string,
-      { name: string; unit: string | null; amount: number }
-    >();
+  const baseIngredients = useMemo(() => {
+    const summed = new Map<string, SummedIngredientRow>();
     const unsummed: { label: string; dayId: number }[] = [];
 
     for (const entry of loadedEntries) {
@@ -236,6 +266,7 @@ const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
           existing.amount += scaledAmount;
         } else {
           summed.set(key, {
+            id: key,
             name: normalizedName,
             unit: normalizedUnit,
             amount: scaledAmount,
@@ -250,6 +281,39 @@ const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
     };
   }, [loadedEntries, servingsByDay]);
 
+  useEffect(() => {
+    setManualMergeMap({});
+    setDraggingIngredientId(null);
+    setDropTargetId(null);
+    setMergeError(null);
+  }, [selectedWeek]);
+
+  const summedIngredients = useMemo(() => {
+    const rowMap = new Map(
+      baseIngredients.summed.map((row) => [
+        row.id,
+        {
+          ...row,
+        },
+      ])
+    );
+
+    for (const [sourceId, rawTargetId] of Object.entries(manualMergeMap)) {
+      const resolvedTargetId = resolveMergeTarget(rawTargetId, manualMergeMap);
+      if (sourceId === resolvedTargetId) continue;
+
+      const sourceRow = rowMap.get(sourceId);
+      const targetRow = rowMap.get(resolvedTargetId);
+      if (!sourceRow || !targetRow) continue;
+      if (!canMergeIngredientRows(sourceRow, targetRow)) continue;
+
+      targetRow.amount += sourceRow.amount;
+      rowMap.delete(sourceId);
+    }
+
+    return Array.from(rowMap.values()).sort((a, b) => a.name.localeCompare(b.name, "sv"));
+  }, [baseIngredients.summed, manualMergeMap]);
+
   const missingRecipeContent = useMemo(
     () =>
       loadedEntries.filter(
@@ -262,6 +326,54 @@ const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
     const rounded = Math.round(amount * 100) / 100;
     if (Number.isInteger(rounded)) return String(rounded);
     return rounded.toFixed(2).replace(/\.?0+$/, "");
+  };
+
+  const tryMergeIngredients = (sourceId: string, targetId: string) => {
+    if (sourceId === targetId) return;
+
+    const sourceRow = summedIngredients.find((row) => row.id === sourceId);
+    const targetRow = summedIngredients.find((row) => row.id === targetId);
+    if (!sourceRow || !targetRow) return;
+
+    if (!canMergeIngredientRows(sourceRow, targetRow)) {
+      setMergeError("Kan inte slå ihop rader med olika enheter ännu.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Slå ihop "${sourceRow.name}" med "${targetRow.name}"?`
+    );
+    if (!confirmed) return;
+
+    setMergeError(null);
+    setManualMergeMap((prev) => ({
+      ...prev,
+      [sourceId]: resolveMergeTarget(targetId, prev),
+    }));
+  };
+
+  const clearDragState = () => {
+    setDraggingIngredientId(null);
+    setDropTargetId(null);
+  };
+
+  const handleTouchMove = (event: React.TouchEvent<HTMLDivElement>) => {
+    if (!draggingIngredientId) return;
+
+    const touch = event.touches[0];
+    if (!touch) return;
+
+    const element = document.elementFromPoint(touch.clientX, touch.clientY);
+    const dropElement = element?.closest("[data-ingredient-id]");
+    const nextDropTarget = dropElement?.getAttribute("data-ingredient-id") || null;
+    setDropTargetId(nextDropTarget === draggingIngredientId ? null : nextDropTarget);
+  };
+
+  const handleTouchEnd = () => {
+    if (draggingIngredientId && dropTargetId) {
+      tryMergeIngredients(draggingIngredientId, dropTargetId);
+    }
+    clearDragState();
   };
 
   return (
@@ -361,16 +473,56 @@ const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
         <h2 className="text-sm font-bold text-gray-500 uppercase tracking-widest">
           Summerade ingredienser
         </h2>
-        {summableIngredients.summed.length === 0 && summableIngredients.unsummed.length === 0 ? (
+        <p className="text-xs text-gray-500">
+          Dra en ingrediensrad ovanpå en annan för att slå ihop dem lokalt i listan.
+        </p>
+        {mergeError && <p className="text-sm text-amber-700">{mergeError}</p>}
+        {summedIngredients.length === 0 && baseIngredients.unsummed.length === 0 ? (
           <p className="text-sm text-gray-500">Inga ingredienser kunde räknas fram.</p>
         ) : (
           <>
-            {summableIngredients.summed.length > 0 && (
+            {summedIngredients.length > 0 && (
               <div className="space-y-2">
-                {summableIngredients.summed.map((ingredient) => (
+                {summedIngredients.map((ingredient) => (
                   <div
-                    key={`${ingredient.name}-${ingredient.unit ?? "no-unit"}`}
-                    className="flex items-center justify-between gap-3"
+                    key={ingredient.id}
+                    data-ingredient-id={ingredient.id}
+                    draggable
+                    onDragStart={() => {
+                      setMergeError(null);
+                      setDraggingIngredientId(ingredient.id);
+                      setDropTargetId(null);
+                    }}
+                    onDragOver={(event) => {
+                      if (!draggingIngredientId || draggingIngredientId === ingredient.id) {
+                        return;
+                      }
+                      event.preventDefault();
+                      setDropTargetId(ingredient.id);
+                    }}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      if (draggingIngredientId) {
+                        tryMergeIngredients(draggingIngredientId, ingredient.id);
+                      }
+                      clearDragState();
+                    }}
+                    onDragEnd={clearDragState}
+                    onTouchStart={() => {
+                      setMergeError(null);
+                      setDraggingIngredientId(ingredient.id);
+                      setDropTargetId(null);
+                    }}
+                    onTouchMove={handleTouchMove}
+                    onTouchEnd={handleTouchEnd}
+                    className={`flex items-center justify-between gap-3 rounded-xl border px-3 py-3 transition-colors ${
+                      dropTargetId === ingredient.id
+                        ? "border-emerald-400 bg-emerald-50"
+                        : draggingIngredientId === ingredient.id
+                        ? "border-emerald-200 bg-gray-50"
+                        : "border-gray-100"
+                    }`}
+                    style={{ WebkitUserSelect: "none" }}
                   >
                     <span className="text-gray-900 font-medium">{ingredient.name}</span>
                     <span className="text-gray-500 text-sm whitespace-nowrap">
@@ -380,12 +532,12 @@ const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
                 ))}
               </div>
             )}
-            {summableIngredients.unsummed.length > 0 && (
+            {baseIngredients.unsummed.length > 0 && (
               <div className="pt-2 border-t border-gray-100 space-y-2">
                 <p className="text-xs font-bold uppercase tracking-widest text-gray-400">
                   Osummerat underlag
                 </p>
-                {summableIngredients.unsummed.map((ingredient, index) => (
+                {baseIngredients.unsummed.map((ingredient, index) => (
                   <p key={`${ingredient.dayId}-${index}`} className="text-sm text-gray-600">
                     {ingredient.label}
                   </p>
