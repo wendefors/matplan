@@ -28,6 +28,14 @@ type UnsummedIngredientRow = {
 
 const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
 const LAST_SELECTED_WEEK_KEY = "matplaneraren_selected_week_v1";
+const SHOPPING_EXCLUDED_INGREDIENTS = new Set([
+  "salt",
+  "peppar",
+  "svartpeppar",
+  "vitpeppar",
+  "olja",
+  "vatten",
+]);
 
 function getCurrentIsoWeek(): string {
   const now = new Date();
@@ -75,6 +83,10 @@ function shiftIsoWeek(weekIdentifier: string, deltaWeeks: number): string {
 
 function normalizeKeyPart(value: string | null): string {
   return (value ?? "").trim().toLowerCase();
+}
+
+function shouldExcludeFromShoppingList(name: string): boolean {
+  return SHOPPING_EXCLUDED_INGREDIENTS.has(normalizeKeyPart(name));
 }
 
 function canMergeIngredientRows(
@@ -254,6 +266,10 @@ const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
       const factor = selectedServings / baseServings;
 
       for (const ingredient of entry.full.ingredients) {
+        if (shouldExcludeFromShoppingList(ingredient.name)) {
+          continue;
+        }
+
         if (ingredient.amount === null) {
           const label = [ingredient.unit, ingredient.name].filter(Boolean).join(" ").trim();
           unsummed.push({
