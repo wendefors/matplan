@@ -16,6 +16,17 @@ interface MealPlannerProps {
 }
 
 const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
+const LAST_SELECTED_WEEK_KEY = "matplaneraren_selected_week_v1";
+
+function getCurrentIsoWeek(): string {
+  const now = new Date();
+  const d = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
+  const dayNum = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  const weekNo = Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+  return `${d.getUTCFullYear()}-W${String(weekNo).padStart(2, "0")}`;
+}
 
 function isoWeekDayToISODate(weekIdentifier: string, dayId: number): string {
   // weekIdentifier: "2026-W02"
@@ -52,13 +63,11 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
   const navigate = useNavigate();
   const location = useLocation();
   const [selectedWeek, setSelectedWeek] = useState(() => {
-    const now = new Date();
-    const d = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
-    const dayNum = d.getUTCDay() || 7;
-    d.setUTCDate(d.getUTCDate() + 4 - dayNum);
-    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-    const weekNo = Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
-    return `${d.getUTCFullYear()}-W${String(weekNo).padStart(2, "0")}`;
+    const stored =
+      typeof window !== "undefined"
+        ? window.localStorage.getItem(LAST_SELECTED_WEEK_KEY)
+        : null;
+    return stored || getCurrentIsoWeek();
   });
 
   const [activeDayIndices, setActiveDayIndices] = useState<number[]>(ALL_DAYS);
@@ -77,7 +86,12 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
     );
   }, [plans, selectedWeek]);
 
-  // När du byter vecka: läs veckans sparade "tända/släckta" (eller default ALLA)
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(LAST_SELECTED_WEEK_KEY, selectedWeek);
+  }, [selectedWeek]);
+
+  // Synka aktiva dagar både när vecka byts och när plans laddas/uppdateras.
   useEffect(() => {
     const fromPlan =
       currentPlan.activeDayIndices && currentPlan.activeDayIndices.length > 0
@@ -85,8 +99,7 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
         : ALL_DAYS;
 
     setActiveDayIndices(fromPlan);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedWeek]);
+  }, [selectedWeek, currentPlan.activeDayIndices]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
