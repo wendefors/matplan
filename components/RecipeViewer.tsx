@@ -85,8 +85,11 @@ const RecipeViewer: React.FC = () => {
   };
 
   return (
-    <div className="fixed inset-0 z-40 bg-white flex flex-col">
-      <header className="sticky top-0 z-10 bg-white border-b border-gray-100 px-4 py-3">
+    <div className="fixed inset-0 z-40 h-[100dvh] overflow-hidden bg-white flex flex-col">
+      <header
+        className="shrink-0 bg-white border-b border-gray-100 px-4 pb-3 pt-3"
+        style={{ paddingTop: "calc(0.75rem + env(safe-area-inset-top, 0px))" }}
+      >
         <div className="flex items-center gap-3">
           <button
             type="button"
@@ -125,11 +128,20 @@ const RecipeViewer: React.FC = () => {
         <p className="sr-only">Portionsfaktor {servingFactor}</p>
       </header>
 
-      <main className="flex-1 min-h-0 p-4">
-        <div className="grid h-full min-h-0 grid-cols-1 grid-rows-2 gap-4 [@media(orientation:landscape)]:grid-cols-2 [@media(orientation:landscape)]:grid-rows-1">
+      <main
+        className="flex-1 min-h-0 overflow-y-auto [@media(orientation:landscape)]:overflow-hidden"
+        style={{
+          WebkitOverflowScrolling: "touch",
+          paddingBottom: "calc(1rem + env(safe-area-inset-bottom, 0px))",
+        }}
+      >
+        <div className="min-h-full p-4 [@media(orientation:landscape)]:h-full [@media(orientation:landscape)]:min-h-0">
+          <div className="grid grid-cols-1 gap-4 [@media(orientation:landscape)]:h-full [@media(orientation:landscape)]:min-h-0 [@media(orientation:landscape)]:grid-cols-2">
           <section
-            className="min-h-0 overflow-y-auto overscroll-contain rounded-2xl border border-gray-100 bg-white p-4 shadow-sm"
-            style={{ WebkitOverflowScrolling: "touch" }}
+            className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm [@media(orientation:landscape)]:min-h-0 [@media(orientation:landscape)]:overflow-y-auto [@media(orientation:landscape)]:overscroll-contain"
+            style={{
+              WebkitOverflowScrolling: "touch",
+            }}
           >
             <h2 className="text-sm font-bold uppercase tracking-widest text-gray-500 mb-3">
               Ingredienser
@@ -168,8 +180,10 @@ const RecipeViewer: React.FC = () => {
           </section>
 
           <section
-            className="min-h-0 overflow-y-auto overscroll-contain rounded-2xl border border-gray-100 bg-white p-4 shadow-sm"
-            style={{ WebkitOverflowScrolling: "touch" }}
+            className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm [@media(orientation:landscape)]:min-h-0 [@media(orientation:landscape)]:overflow-y-auto [@media(orientation:landscape)]:overscroll-contain"
+            style={{
+              WebkitOverflowScrolling: "touch",
+            }}
           >
             <h2 className="text-sm font-bold uppercase tracking-widest text-gray-500 mb-3">
               Steg
@@ -224,6 +238,7 @@ const RecipeViewer: React.FC = () => {
               <p className="text-lg text-gray-500">Inga steg.</p>
             )}
           </section>
+        </div>
         </div>
       </main>
     </div>
