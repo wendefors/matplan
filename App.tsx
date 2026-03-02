@@ -5,6 +5,7 @@ import MealPlanner from "./components/MealPlanner";
 import RecipeList from "./components/RecipeList";
 import RecipeContentEditor from "./components/RecipeContentEditor";
 import RecipeViewer from "./components/RecipeViewer";
+import ShoppingList from "./components/ShoppingList";
 import Login from "./components/Login";
 import { supabase } from "./supabaseClient";
 
@@ -504,6 +505,10 @@ const App: React.FC = () => {
               }
             />
             <Route
+              path="/shopping"
+              element={<ShoppingList recipes={recipes} plans={plans} />}
+            />
+            <Route
               path="/recipes/:id/content"
               element={
                 <RecipeContentEditor
@@ -520,6 +525,7 @@ const App: React.FC = () => {
         <nav className="fixed bottom-0 left-0 right-0 max-w-lg mx-auto bg-white border-t border-gray-100 flex shadow-2xl z-20">
           <NavLink to="/">Planering</NavLink>
           <NavLink to="/recipes">Mina rätter</NavLink>
+          <NavLink to="/shopping">Inköpslista</NavLink>
         </nav>
       </div>
     </HashRouter>
