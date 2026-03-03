@@ -7,6 +7,7 @@ type ContentIngredient = {
   amount: string;
   unit: string;
   optional: boolean;
+  excludeFromShopping: boolean;
   sortOrder: number;
 };
 
@@ -68,6 +69,7 @@ const RecipeContentEditor: React.FC<RecipeContentEditorProps> = ({
               amount: ingredient.amount === null ? "" : String(ingredient.amount),
               unit: ingredient.unit ?? "",
               optional: ingredient.optional,
+              excludeFromShopping: ingredient.excludeFromShopping,
               sortOrder: ingredient.sortOrder,
             }))
         );
@@ -99,7 +101,14 @@ const RecipeContentEditor: React.FC<RecipeContentEditorProps> = ({
   const addIngredient = () => {
     setIngredients((prev) => [
       ...prev,
-      { name: "", amount: "", unit: "", optional: false, sortOrder: prev.length },
+      {
+        name: "",
+        amount: "",
+        unit: "",
+        optional: false,
+        excludeFromShopping: false,
+        sortOrder: prev.length,
+      },
     ]);
   };
 
@@ -160,6 +169,7 @@ const RecipeContentEditor: React.FC<RecipeContentEditorProps> = ({
               : Number(ingredient.amount.replace(",", ".")),
           unit: ingredient.unit.trim() === "" ? null : ingredient.unit,
           optional: ingredient.optional,
+          excludeFromShopping: ingredient.excludeFromShopping,
         })),
         steps: steps.map((step) => ({ text: step.text })),
       });
@@ -244,7 +254,7 @@ const RecipeContentEditor: React.FC<RecipeContentEditorProps> = ({
                         placeholder="Ingrediens"
                         className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm"
                       />
-                      <div className="grid grid-cols-[minmax(0,0.9fr)_minmax(0,0.9fr)_auto] gap-2 items-center">
+                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,0.9fr)_minmax(0,0.9fr)]">
                         <input
                           value={ingredient.amount}
                           onChange={(e) =>
@@ -269,6 +279,8 @@ const RecipeContentEditor: React.FC<RecipeContentEditorProps> = ({
                           placeholder="Enhet"
                           className="min-w-0 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm"
                         />
+                      </div>
+                      <div className="flex flex-wrap gap-4">
                         <label className="flex items-center gap-2 text-xs text-gray-700 whitespace-nowrap">
                           <input
                             type="checkbox"
@@ -284,6 +296,25 @@ const RecipeContentEditor: React.FC<RecipeContentEditorProps> = ({
                             }
                           />
                           Valfritt
+                        </label>
+                        <label className="flex items-center gap-2 text-xs text-gray-700 whitespace-nowrap">
+                          <input
+                            type="checkbox"
+                            checked={ingredient.excludeFromShopping}
+                            onChange={(e) =>
+                              setIngredients((prev) =>
+                                prev.map((row, i) =>
+                                  i === index
+                                    ? {
+                                        ...row,
+                                        excludeFromShopping: e.target.checked,
+                                      }
+                                    : row
+                                )
+                              )
+                            }
+                          />
+                          Exkludera inköp
                         </label>
                       </div>
                       <div className="flex flex-wrap gap-2">

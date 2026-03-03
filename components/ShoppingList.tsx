@@ -266,7 +266,10 @@ const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
       const factor = selectedServings / baseServings;
 
       for (const ingredient of entry.full.ingredients) {
-        if (shouldExcludeFromShoppingList(ingredient.name)) {
+        if (
+          ingredient.excludeFromShopping ||
+          shouldExcludeFromShoppingList(ingredient.name)
+        ) {
           continue;
         }
 

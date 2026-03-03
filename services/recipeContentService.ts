@@ -13,6 +13,7 @@ export type RecipeSnapshotIngredient = {
   amount: string;
   unit: string;
   optional: boolean;
+  exclude_from_shopping?: boolean;
   sort_order: number;
 };
 
@@ -43,6 +44,7 @@ export type RecipeFullIngredientInput = {
   amount: number | string | null;
   unit: string | null;
   optional: boolean;
+  excludeFromShopping?: boolean;
 };
 
 export type RecipeFullStepInput = {
@@ -63,6 +65,7 @@ export type RecipeFullIngredient = {
   amount: number | null;
   unit: string | null;
   optional: boolean;
+  excludeFromShopping: boolean;
   sortOrder: number;
 };
 
@@ -89,6 +92,7 @@ type DbIngredientRow = {
   amount: number | null;
   unit: string | null;
   optional: boolean;
+  exclude_from_shopping: boolean;
   sort_order: number;
 };
 
@@ -119,6 +123,7 @@ type DbRecipeIngredientRow = {
   amount: number | null;
   unit: string | null;
   optional: boolean;
+  exclude_from_shopping: boolean;
   sort_order: number;
 };
 
@@ -192,6 +197,7 @@ function normalizeRecipeFullInput(input: SaveRecipeFullInput): RecipeFull {
         amount,
         unit,
         optional,
+        excludeFromShopping: !!ingredient.excludeFromShopping,
         sortOrder: 0,
       } as RecipeFullIngredient;
     })
@@ -253,7 +259,9 @@ export async function fetchRecipeSnapshot(
 
   const { data: ingredientData, error: ingredientError } = await supabase
     .from("recipe_ingredients")
-    .select("id,user_id,recipe_id,name,amount,unit,optional,sort_order")
+    .select(
+      "id,user_id,recipe_id,name,amount,unit,optional,exclude_from_shopping,sort_order"
+    )
     .eq("recipe_id", recipe.id)
     .eq("user_id", userId)
     .order("sort_order", { ascending: true });
@@ -276,6 +284,7 @@ export async function fetchRecipeSnapshot(
         amount: row.amount === null ? "" : String(row.amount),
         unit: row.unit ?? "",
         optional: !!row.optional,
+        exclude_from_shopping: !!row.exclude_from_shopping,
         sort_order: row.sort_order,
       }))
     ),
@@ -325,6 +334,7 @@ export async function saveRecipeSnapshot(
           : Number(ingredient.amount.replace(",", ".")),
       unit: ingredient.unit.trim() === "" ? null : ingredient.unit.trim(),
       optional: ingredient.optional,
+      exclude_from_shopping: !!ingredient.exclude_from_shopping,
       sort_order: ingredient.sort_order,
     }));
 
@@ -428,6 +438,7 @@ export async function saveRecipeFull(
       amount: ingredient.amount,
       unit: ingredient.unit,
       optional: ingredient.optional,
+      exclude_from_shopping: ingredient.excludeFromShopping,
       sort_order: ingredient.sortOrder,
     }));
 
@@ -492,7 +503,9 @@ export async function fetchRecipeFull(recipeId: number): Promise<RecipeFull> {
 
   const { data: ingredientData, error: ingredientError } = await supabase
     .from("recipe_ingredients")
-    .select("id,recipe_id,user_id,name,amount,unit,optional,sort_order")
+    .select(
+      "id,recipe_id,user_id,name,amount,unit,optional,exclude_from_shopping,sort_order"
+    )
     .eq("recipe_id", recipeId)
     .eq("user_id", userId)
     .order("sort_order", { ascending: true });
@@ -534,6 +547,7 @@ export async function fetchRecipeFull(recipeId: number): Promise<RecipeFull> {
       amount: row.amount,
       unit: row.unit,
       optional: !!row.optional,
+      excludeFromShopping: !!row.exclude_from_shopping,
       sortOrder: row.sort_order,
     })),
     steps: stepRows.map((row) => ({
