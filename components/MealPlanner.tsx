@@ -726,36 +726,34 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
               </button>
             </div>
 
-            {/* Fritext */}
-            <div className="p-4 border-b border-gray-100 space-y-3">
-              <label className="block text-xs font-bold text-gray-600 uppercase tracking-wide">
-                Fritext
-              </label>
-              <textarea
-                value={freeTextDraft}
-                onChange={(e) => setFreeTextDraft(e.target.value)}
-                placeholder="Skriv valfri text..."
-                className="w-full min-h-[80px] p-3 bg-gray-50 rounded-2xl border-2 border-transparent focus:border-emerald-500 focus:outline-none"
-              />
-              <div className="flex gap-2">
-                <button
-                  onClick={() => updateDayFreeText(showRecipeModal, freeTextDraft)}
-                  className="flex-1 bg-gray-900 text-white py-3 rounded-2xl font-bold active:scale-95 transition-transform"
-                >
-                  Spara fritext
-                </button>
-                <button
-                  onClick={() => updateDayFreeText(showRecipeModal, "")}
-                  className="flex-none px-4 bg-gray-100 text-gray-700 py-3 rounded-2xl font-bold active:scale-95 transition-transform"
-                  title="Rensa fritext"
-                >
-                  Rensa
-                </button>
+            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+              <div className="rounded-2xl border border-gray-100 bg-gray-50 p-3 space-y-2">
+                <label className="block text-[11px] font-bold text-gray-600 uppercase tracking-wide">
+                  Fritext
+                </label>
+                <textarea
+                  value={freeTextDraft}
+                  onChange={(e) => setFreeTextDraft(e.target.value)}
+                  placeholder="Skriv valfri text..."
+                  className="w-full min-h-[64px] p-3 bg-white rounded-xl border border-gray-200 focus:border-emerald-500 focus:outline-none"
+                />
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => updateDayFreeText(showRecipeModal, freeTextDraft)}
+                    className="flex-1 bg-gray-900 text-white py-2.5 rounded-xl text-sm font-bold active:scale-95 transition-transform"
+                  >
+                    Spara fritext
+                  </button>
+                  <button
+                    onClick={() => updateDayFreeText(showRecipeModal, "")}
+                    className="flex-none px-4 bg-white border border-gray-200 text-gray-700 py-2.5 rounded-xl text-sm font-bold active:scale-95 transition-transform"
+                    title="Rensa fritext"
+                  >
+                    Rensa
+                  </button>
+                </div>
               </div>
-            </div>
 
-            {/* Receptlista */}
-            <div className="overflow-y-auto p-4 space-y-2">
               <button
                 onClick={() => updateDayRecipe(showRecipeModal, null)}
                 className="w-full text-left p-4 rounded-2xl hover:bg-gray-50 transition-colors border-2 border-transparent hover:border-gray-200 text-red-500 font-semibold"

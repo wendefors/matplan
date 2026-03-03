@@ -131,15 +131,38 @@ async function updateLastCookedUpdates(
   const userId = await getCurrentUserId();
   if (updates.length === 0) return;
 
-  // Kör uppdateringar parallellt
+  const parseComparableDate = (value: string | null) => {
+    if (!value) return null;
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return null;
+    return parsed.getTime();
+  };
+
   const results = await Promise.all(
-    updates.map((u) =>
-      supabase
+    updates.map(async (u) => {
+      const { data, error } = await supabase
+        .from("recipes")
+        .select("last_cooked")
+        .eq("user_id", userId)
+        .eq("id", u.id)
+        .maybeSingle();
+
+      if (error) return { error };
+
+      const currentDate = parseComparableDate(data?.last_cooked ?? null);
+      const nextDate = parseComparableDate(u.lastCooked);
+
+      // Skriv aldrig över med ett äldre datum.
+      if (currentDate !== null && nextDate !== null && currentDate > nextDate) {
+        return { error: null };
+      }
+
+      return supabase
         .from("recipes")
         .update({ last_cooked: u.lastCooked })
         .eq("user_id", userId)
-        .eq("id", u.id)
-    )
+        .eq("id", u.id);
+    })
   );
 
   // Om någon failar, kasta fel så vi hamnar i catch i App
@@ -443,19 +466,31 @@ const App: React.FC = () => {
 
   // NYTT: "Spara som lagade" – per recept kan datum skilja
   const handleMarkCooked = async (updates: { id: number; lastCooked: string }[]) => {
-    // Optimistiskt i UI
-    setRecipes((prev) => {
-      const map = new Map<number, string>();
-      updates.forEach((u) => map.set(u.id, u.lastCooked));
-      return prev.map((r) =>
-        map.has(r.id) ? { ...r, lastCooked: map.get(r.id)! } : r
-      );
+    const parseComparableDate = (value: string | null) => {
+      if (!value) return null;
+      const parsed = new Date(value);
+      if (Number.isNaN(parsed.getTime())) return null;
+      return parsed.getTime();
+    };
+
+    const applicableUpdates = updates.filter((update) => {
+      const existing = recipes.find((recipe) => recipe.id === update.id);
+      if (!existing?.lastCooked) return true;
+
+      const currentDate = parseComparableDate(existing.lastCooked);
+      const nextDate = parseComparableDate(update.lastCooked);
+      if (currentDate === null || nextDate === null) return true;
+      return currentDate <= nextDate;
     });
+
+    if (applicableUpdates.length === 0) return;
 
     try {
       await withRecipeWriteGuard(async () => {
-        await updateLastCookedUpdates(updates);
+        await updateLastCookedUpdates(applicableUpdates);
       });
+      const r = await fetchRecipesFromSupabase();
+      setRecipes(r);
     } catch (e) {
       console.error("SAVE last_cooked FAILED:", e);
       // Återladda för att undvika att UI visar fel
@@ -524,7 +559,7 @@ const App: React.FC = () => {
 
         <nav className="fixed bottom-0 left-0 right-0 max-w-lg mx-auto bg-white border-t border-gray-100 flex shadow-2xl z-20">
           <NavLink to="/">Planering</NavLink>
-          <NavLink to="/recipes">Mina rätter</NavLink>
+          <NavLink to="/recipes">Våra rätter</NavLink>
           <NavLink to="/shopping">Inköpslista</NavLink>
         </nav>
       </div>

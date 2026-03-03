@@ -250,7 +250,7 @@ const RecipeList: React.FC<RecipeListProps> = ({
 
       <div className="space-y-3">
         <h2 className="text-sm font-bold text-gray-500 uppercase tracking-widest pl-1">
-          Dina sparade rätter ({filteredRecipes.length})
+          Våra sparade rätter ({filteredRecipes.length})
         </h2>
         {filteredRecipes.length > 0 ? (
           filteredRecipes.map((recipe) => (
