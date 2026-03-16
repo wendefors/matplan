@@ -19,6 +19,7 @@ const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
 const LAST_SELECTED_WEEK_KEY = "matplaneraren_selected_week_v1";
 const CALENDAR_ICS_URL =
   "webcal://p124-caldav.icloud.com/published/2/MjY4MDY0MTMzMjY4MDY0MZHfXvtitZZC9fN4qXJIo6P0X92JjkUY6Qwrt1VJqJnaKV6g_XnQxVr6yxa9SmulWnDQR_ZiAew1g2unqdQe5d8";
+const FALLBACK_SUPABASE_PROJECT_REF = "rmnqaqqtdysjpstktvvr";
 
 // Prioritet för proxy-endpoint:
 // 1) Explicit env: VITE_ICS_PROXY_URL
@@ -45,6 +46,42 @@ function resolveCalendarProxyEndpoint(): string {
 }
 
 const CALENDAR_PROXY_ENDPOINT = resolveCalendarProxyEndpoint();
+
+// Bygger en lista av kandidater så vi kan prova flera vägar i publicerad miljö.
+function buildCalendarProxyEndpointCandidates(): string[] {
+  const candidates: string[] = [];
+  const explicitProxy = (import.meta as any)?.env?.VITE_ICS_PROXY_URL?.trim?.();
+  const supabaseUrl = (import.meta as any)?.env?.VITE_SUPABASE_URL?.trim?.();
+
+  if (explicitProxy) {
+    candidates.push(explicitProxy);
+  }
+
+  if (supabaseUrl) {
+    try {
+      const host = new URL(supabaseUrl).hostname;
+      const projectRef = host.replace(/\.supabase\.co$/i, "");
+      if (projectRef && projectRef !== host) {
+        candidates.push(`https://${projectRef}.functions.supabase.co/icloud-ics-proxy`);
+      }
+    } catch {
+      // Ignorera parse-fel och gå vidare till nästa kandidat.
+    }
+  }
+
+  // Stabil fallback: projektets edge function-URL utan beroende av build-secrets.
+  candidates.push(
+    `https://${FALLBACK_SUPABASE_PROJECT_REF}.functions.supabase.co/icloud-ics-proxy`
+  );
+
+  // Endast relevant i localhost, men ofarlig att ha sist i listan.
+  candidates.push("/api/ics");
+
+  // Rensa dubletter, bevara ordning.
+  return Array.from(new Set(candidates.filter(Boolean)));
+}
+
+const CALENDAR_PROXY_ENDPOINT_CANDIDATES = buildCalendarProxyEndpointCandidates();
 
 type CalendarEventPeriod = {
   start: Date;
@@ -187,7 +224,18 @@ function buildCalendarProxyRequestUrl(normalizedCalendarUrl: string): string {
   if (CALENDAR_PROXY_ENDPOINT === "/api/ics") {
     return `/api/ics?url=${encodeURIComponent(normalizedCalendarUrl)}`;
   }
-  return CALENDAR_PROXY_ENDPOINT;
+  return `${CALENDAR_PROXY_ENDPOINT}?t=${Date.now()}`;
+}
+
+// Samma som ovan men för valfri endpoint-kandidat.
+function buildCalendarProxyRequestUrlForEndpoint(
+  endpoint: string,
+  normalizedCalendarUrl: string
+): string {
+  if (endpoint === "/api/ics") {
+    return `/api/ics?url=${encodeURIComponent(normalizedCalendarUrl)}`;
+  }
+  return `${endpoint}?t=${Date.now()}`;
 }
 
 // Enkel parser för vanliga iCalendar-datumformat.
@@ -701,24 +749,47 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
     const normalizedUrl = normalizeCalendarUrl(CALENDAR_ICS_URL);
     if (!normalizedUrl) return;
 
-    try {
-      const requestUrl = buildCalendarProxyRequestUrl(normalizedUrl);
-      const response = await fetch(requestUrl, { cache: "no-store" });
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
+    const endpointCandidates = [
+      ...CALENDAR_PROXY_ENDPOINT_CANDIDATES,
+      CALENDAR_PROXY_ENDPOINT,
+    ];
+    const uniqueCandidates = Array.from(new Set(endpointCandidates.filter(Boolean)));
 
-      const icsText = await response.text();
-      const events = extractIcsEventPeriods(icsText);
-      const busyDays = computeBusyEveningDays(selectedWeek, events);
-      const eveningByDay = buildWeekEveningEvents(selectedWeek, events);
-      setBusyEveningDays(busyDays);
-      setEveningEventsByDay(eveningByDay);
-    } catch (error) {
-      console.error("CALENDAR SYNC FAILED:", error);
-      setBusyEveningDays(new Set());
-      setEveningEventsByDay(new Map());
+    for (const endpoint of uniqueCandidates) {
+      try {
+        const requestUrl = buildCalendarProxyRequestUrlForEndpoint(
+          endpoint,
+          normalizedUrl
+        );
+        const response = await fetch(requestUrl, { cache: "no-store" });
+        const responseText = await response.text();
+
+        if (!response.ok) {
+          console.warn("CALENDAR SYNC ENDPOINT FAILED:", {
+            endpoint,
+            status: response.status,
+            body: responseText.slice(0, 200),
+          });
+          continue;
+        }
+
+        const events = extractIcsEventPeriods(responseText);
+        const busyDays = computeBusyEveningDays(selectedWeek, events);
+        const eveningByDay = buildWeekEveningEvents(selectedWeek, events);
+        setBusyEveningDays(busyDays);
+        setEveningEventsByDay(eveningByDay);
+        return;
+      } catch (error) {
+        console.warn("CALENDAR SYNC NETWORK ERROR:", {
+          endpoint,
+          error,
+        });
+      }
     }
+
+    console.error("CALENDAR SYNC FAILED: no endpoint candidate succeeded");
+    setBusyEveningDays(new Set());
+    setEveningEventsByDay(new Map());
   };
 
   // Synka när vecka ändras (körs även för initial vecka).
