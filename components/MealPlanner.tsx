@@ -17,6 +17,14 @@ interface MealPlannerProps {
 
 const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
 const LAST_SELECTED_WEEK_KEY = "matplaneraren_selected_week_v1";
+const CALENDAR_ICS_URL =
+  "webcal://p124-caldav.icloud.com/published/2/MjY4MDY0MTMzMjY4MDY0MZHfXvtitZZC9fN4qXJIo6P0X92JjkUY6Qwrt1VJqJnaKV6g_XnQxVr6yxa9SmulWnDQR_ZiAew1g2unqdQe5d8";
+
+type CalendarEventPeriod = {
+  start: Date;
+  end: Date;
+  summary: string;
+};
 
 function getCurrentIsoWeek(): string {
   const now = new Date();
@@ -137,6 +145,181 @@ function isoWeekDayToISODate(weekIdentifier: string, dayId: number): string {
   return target.toISOString().slice(0, 10); // YYYY-MM-DD
 }
 
+// iCloud delar ofta URL som webcal:// - konvertera till https:// för fetch.
+function normalizeCalendarUrl(url: string): string {
+  const trimmed = url.trim();
+  if (trimmed.toLowerCase().startsWith("webcal://")) {
+    return `https://${trimmed.slice("webcal://".length)}`;
+  }
+  return trimmed;
+}
+
+// Enkel parser för vanliga iCalendar-datumformat.
+function parseIcsDateValue(rawValue: string): Date | null {
+  const value = rawValue.trim();
+
+  if (/^\d{8}$/.test(value)) {
+    const y = Number(value.slice(0, 4));
+    const m = Number(value.slice(4, 6));
+    const d = Number(value.slice(6, 8));
+    return new Date(y, m - 1, d, 0, 0, 0, 0);
+  }
+
+  if (/^\d{8}T\d{6}Z$/.test(value)) {
+    const y = Number(value.slice(0, 4));
+    const m = Number(value.slice(4, 6));
+    const d = Number(value.slice(6, 8));
+    const hh = Number(value.slice(9, 11));
+    const mm = Number(value.slice(11, 13));
+    const ss = Number(value.slice(13, 15));
+    return new Date(Date.UTC(y, m - 1, d, hh, mm, ss));
+  }
+
+  if (/^\d{8}T\d{6}$/.test(value)) {
+    const y = Number(value.slice(0, 4));
+    const m = Number(value.slice(4, 6));
+    const d = Number(value.slice(6, 8));
+    const hh = Number(value.slice(9, 11));
+    const mm = Number(value.slice(11, 13));
+    const ss = Number(value.slice(13, 15));
+    return new Date(y, m - 1, d, hh, mm, ss, 0);
+  }
+
+  return null;
+}
+
+function decodeIcsText(rawValue: string): string {
+  return rawValue
+    .replace(/\\n/gi, "\n")
+    .replace(/\\,/g, ",")
+    .replace(/\\;/g, ";")
+    .replace(/\\\\/g, "\\");
+}
+
+// Plockar ut grundläggande VEVENT-intervall ur en ICS-text.
+function extractIcsEventPeriods(icsText: string): CalendarEventPeriod[] {
+  const unfolded = icsText.replace(/\r?\n[ \t]/g, "");
+  const lines = unfolded.split(/\r?\n/);
+  const events: CalendarEventPeriod[] = [];
+
+  let inEvent = false;
+  let dtStartRaw: string | null = null;
+  let dtEndRaw: string | null = null;
+  let summaryRaw: string | null = null;
+  let statusCancelled = false;
+
+  const pushEvent = () => {
+    if (!dtStartRaw || statusCancelled) return;
+
+    // Ignorera heldagsaktiviteter (DATE-format utan tid), enligt önskemål.
+    if (/^\d{8}$/.test(dtStartRaw)) return;
+
+    const start = parseIcsDateValue(dtStartRaw);
+    if (!start) return;
+
+    // Om DTEND saknas: anta 1 timme för tidsatt event eller nästa dag för heldag.
+    let end = dtEndRaw ? parseIcsDateValue(dtEndRaw) : null;
+    if (!end) {
+      end = /^\d{8}$/.test(dtStartRaw)
+        ? new Date(start.getTime() + 24 * 60 * 60 * 1000)
+        : new Date(start.getTime() + 60 * 60 * 1000);
+    }
+
+    if (end.getTime() <= start.getTime()) {
+      end = new Date(start.getTime() + 60 * 60 * 1000);
+    }
+
+    const summary = summaryRaw ? decodeIcsText(summaryRaw).trim() : "";
+    events.push({ start, end, summary: summary || "Aktivitet" });
+  };
+
+  lines.forEach((line) => {
+    if (line === "BEGIN:VEVENT") {
+      inEvent = true;
+      dtStartRaw = null;
+      dtEndRaw = null;
+      summaryRaw = null;
+      statusCancelled = false;
+      return;
+    }
+
+    if (line === "END:VEVENT") {
+      if (inEvent) pushEvent();
+      inEvent = false;
+      return;
+    }
+
+    if (!inEvent) return;
+
+    if (line.startsWith("STATUS:")) {
+      statusCancelled = line.toUpperCase().includes("CANCELLED");
+      return;
+    }
+
+    if (line.startsWith("DTSTART")) {
+      const value = line.split(":").slice(1).join(":");
+      dtStartRaw = value || null;
+      return;
+    }
+
+    if (line.startsWith("DTEND")) {
+      const value = line.split(":").slice(1).join(":");
+      dtEndRaw = value || null;
+      return;
+    }
+
+    if (line.startsWith("SUMMARY")) {
+      const value = line.split(":").slice(1).join(":");
+      summaryRaw = value || null;
+    }
+  });
+
+  return events;
+}
+
+// Markerar vilka dagar i vald vecka som har aktivitet som överlappar 16:00-21:00.
+function computeBusyEveningDays(
+  weekIdentifier: string,
+  events: CalendarEventPeriod[]
+): Set<number> {
+  const busy = new Set<number>();
+
+  for (let dayId = 0; dayId <= 6; dayId += 1) {
+    const dateISO = isoWeekDayToISODate(weekIdentifier, dayId);
+    const eveningStart = new Date(`${dateISO}T16:00:00`);
+    const eveningEnd = new Date(`${dateISO}T21:00:00`);
+
+    const hasOverlap = events.some(
+      (event) => event.end > eveningStart && event.start < eveningEnd
+    );
+
+    if (hasOverlap) busy.add(dayId);
+  }
+
+  return busy;
+}
+
+function buildWeekEveningEvents(
+  weekIdentifier: string,
+  events: CalendarEventPeriod[]
+): Map<number, CalendarEventPeriod[]> {
+  const byDay = new Map<number, CalendarEventPeriod[]>();
+
+  for (let dayId = 0; dayId <= 6; dayId += 1) {
+    const dateISO = isoWeekDayToISODate(weekIdentifier, dayId);
+    const eveningStart = new Date(`${dateISO}T16:00:00`);
+    const eveningEnd = new Date(`${dateISO}T21:00:00`);
+
+    const overlaps = events
+      .filter((event) => event.end > eveningStart && event.start < eveningEnd)
+      .sort((a, b) => a.start.getTime() - b.start.getTime());
+
+    if (overlaps.length > 0) byDay.set(dayId, overlaps);
+  }
+
+  return byDay;
+}
+
 const MealPlanner: React.FC<MealPlannerProps> = ({
   recipes,
   plans,
@@ -161,6 +344,11 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
   const [freeTextDraft, setFreeTextDraft] = useState("");
   const [modalSearchTerm, setModalSearchTerm] = useState("");
   const [modalCategoryFilter, setModalCategoryFilter] = useState<string>("Alla");
+  const [busyEveningDays, setBusyEveningDays] = useState<Set<number>>(new Set());
+  const [eveningEventsByDay, setEveningEventsByDay] = useState<
+    Map<number, CalendarEventPeriod[]>
+  >(new Map());
+  const [showDayEventsModal, setShowDayEventsModal] = useState<number | null>(null);
 
   const currentPlan = useMemo(() => {
     return (
@@ -212,6 +400,10 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        if (showDayEventsModal !== null) {
+          setShowDayEventsModal(null);
+          return;
+        }
         if (showRecipeModal !== null) {
           setShowRecipeModal(null);
           setFreeTextDraft("");
@@ -225,7 +417,7 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
     return () => {
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [showRecipeModal]);
+  }, [showRecipeModal, showDayEventsModal]);
 
   // Hjälpare: spara aktuell veckas activeDayIndices in i plans
   const persistActiveDaysForWeek = (newActive: number[]) => {
@@ -461,6 +653,44 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
     return new Date(isoString).toLocaleDateString("sv-SE");
   };
 
+  const formatTime = (date: Date) =>
+    date.toLocaleTimeString("sv-SE", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+
+  const syncCalendarBusyDays = async () => {
+    const normalizedUrl = normalizeCalendarUrl(CALENDAR_ICS_URL);
+    if (!normalizedUrl) return;
+
+    try {
+      const response = await fetch(
+        `/api/ics?url=${encodeURIComponent(normalizedUrl)}`,
+        { cache: "no-store" }
+      );
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const icsText = await response.text();
+      const events = extractIcsEventPeriods(icsText);
+      const busyDays = computeBusyEveningDays(selectedWeek, events);
+      const eveningByDay = buildWeekEveningEvents(selectedWeek, events);
+      setBusyEveningDays(busyDays);
+      setEveningEventsByDay(eveningByDay);
+    } catch (error) {
+      console.error("CALENDAR SYNC FAILED:", error);
+      setBusyEveningDays(new Set());
+      setEveningEventsByDay(new Map());
+    }
+  };
+
+  // Synka när vecka ändras (körs även för initial vecka).
+  useEffect(() => {
+    void syncCalendarBusyDays();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedWeek]);
+
   return (
     <div className="space-y-8 animate-fadeIn">
       {/* Week Selector */}
@@ -492,6 +722,7 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
             →
           </button>
         </div>
+
       </section>
 
       {/* Day Checklist */}
@@ -510,7 +741,15 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
                   : "bg-gray-100 text-gray-500 border border-transparent"
               }`}
             >
-              {day.substring(0, 3)}
+              <span className="inline-flex items-center gap-1">
+                {day.substring(0, 3)}
+                {busyEveningDays.has(idx) && (
+                  <span
+                    className="inline-block h-1.5 w-1.5 rounded-full bg-amber-500"
+                    title="Aktivitet mellan 16:00-21:00"
+                  />
+                )}
+              </span>
             </button>
           ))}
         </div>
@@ -579,16 +818,30 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
               plan?.recipeId != null ? recipes.find((r) => r.id === plan.recipeId) : null;
             const freeText = (plan?.freeText ?? "").trim();
             const hasSomething = !!recipe || freeText.length > 0;
+            const hasEveningActivity = busyEveningDays.has(dayIdx);
 
             return (
               <div
                 key={dayIdx}
                 className="group bg-white p-4 rounded-2xl border border-gray-100 shadow-sm hover:border-emerald-200 transition-colors"
+                onClick={(event) => {
+                  const target = event.target as HTMLElement;
+                  if (target.closest("button")) return;
+                  if (!hasEveningActivity) return;
+                  setShowDayEventsModal(dayIdx);
+                }}
               >
                 <div className="flex justify-between items-start mb-3">
-                  <span className="text-xs font-bold text-emerald-600 uppercase tracking-wider">
-                    {SWEDISH_DAYS[dayIdx]}
-                  </span>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-xs font-bold text-emerald-600 uppercase tracking-wider">
+                      {SWEDISH_DAYS[dayIdx]}
+                    </span>
+                    {hasEveningActivity && (
+                      <span className="text-[10px] bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full font-semibold">
+                        Kvällsaktivitet
+                      </span>
+                    )}
+                  </div>
 
                   <div className="flex gap-2">
                     {/* Exportera en dag */}
@@ -856,6 +1109,53 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
                   Inga rätter matchar sökning/filtrering.
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showDayEventsModal !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden">
+            <div className="p-5 border-b border-gray-100 flex justify-between items-center">
+              <h3 className="text-base font-bold">
+                Kvällsaktivitet: {SWEDISH_DAYS[showDayEventsModal]}
+              </h3>
+              <button
+                onClick={() => setShowDayEventsModal(null)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="h-6 w-6"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M6 18L18 6M6 6l12 12"
+                  />
+                </svg>
+              </button>
+            </div>
+
+            <div className="p-4 space-y-2 max-h-[60vh] overflow-y-auto">
+              {(eveningEventsByDay.get(showDayEventsModal) ?? []).map((event, index) => (
+                <div
+                  key={`${event.start.toISOString()}-${event.end.toISOString()}-${index}`}
+                  className="rounded-xl border border-gray-100 bg-gray-50 p-3"
+                >
+                  <div className="text-xs font-semibold text-gray-500">
+                    {formatTime(event.start)}-{formatTime(event.end)}
+                  </div>
+                  <div className="text-sm font-semibold text-gray-900 mt-1">
+                    {event.summary}
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         </div>
