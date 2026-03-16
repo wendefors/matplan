@@ -289,7 +289,7 @@ function extractIcsEventPeriods(icsText: string): CalendarEventPeriod[] {
   return events;
 }
 
-// Markerar vilka dagar i vald vecka som har aktivitet som överlappar 15:00-21:00.
+// Markerar vilka dagar i vald vecka som har aktivitet som startar mellan 16:00-19:30.
 function computeBusyEveningDays(
   weekIdentifier: string,
   events: CalendarEventPeriod[]
@@ -298,14 +298,15 @@ function computeBusyEveningDays(
 
   for (let dayId = 0; dayId <= 6; dayId += 1) {
     const dateISO = isoWeekDayToISODate(weekIdentifier, dayId);
-    const eveningStart = new Date(`${dateISO}T15:00:00`);
-    const eveningEnd = new Date(`${dateISO}T21:00:00`);
+    const eveningStartWindow = new Date(`${dateISO}T16:00:00`);
+    const eveningStartWindowEnd = new Date(`${dateISO}T19:30:00`);
 
-    const hasOverlap = events.some(
-      (event) => event.end > eveningStart && event.start < eveningEnd
+    const hasEveningStart = events.some(
+      (event) =>
+        event.start >= eveningStartWindow && event.start <= eveningStartWindowEnd
     );
 
-    if (hasOverlap) busy.add(dayId);
+    if (hasEveningStart) busy.add(dayId);
   }
 
   return busy;
@@ -319,11 +320,14 @@ function buildWeekEveningEvents(
 
   for (let dayId = 0; dayId <= 6; dayId += 1) {
     const dateISO = isoWeekDayToISODate(weekIdentifier, dayId);
-    const eveningStart = new Date(`${dateISO}T15:00:00`);
-    const eveningEnd = new Date(`${dateISO}T21:00:00`);
+    const eveningStartWindow = new Date(`${dateISO}T16:00:00`);
+    const eveningStartWindowEnd = new Date(`${dateISO}T19:30:00`);
 
     const overlaps = events
-      .filter((event) => event.end > eveningStart && event.start < eveningEnd)
+      .filter(
+        (event) =>
+          event.start >= eveningStartWindow && event.start <= eveningStartWindowEnd
+      )
       .sort((a, b) => a.start.getTime() - b.start.getTime());
 
     if (overlaps.length > 0) byDay.set(dayId, overlaps);
@@ -756,7 +760,7 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
                 {busyEveningDays.has(idx) && (
                     <span
                       className="inline-block h-1.5 w-1.5 rounded-full bg-amber-500"
-                      title="Aktivitet mellan 15:00-21:00"
+                      title="Aktivitet med start mellan 16:00-19:30"
                     />
                 )}
               </span>
