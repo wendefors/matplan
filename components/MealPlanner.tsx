@@ -289,7 +289,7 @@ function extractIcsEventPeriods(icsText: string): CalendarEventPeriod[] {
   return events;
 }
 
-// Markerar vilka dagar i vald vecka som har aktivitet som överlappar 16:00-21:00.
+// Markerar vilka dagar i vald vecka som har aktivitet som överlappar 15:00-21:00.
 function computeBusyEveningDays(
   weekIdentifier: string,
   events: CalendarEventPeriod[]
@@ -298,7 +298,7 @@ function computeBusyEveningDays(
 
   for (let dayId = 0; dayId <= 6; dayId += 1) {
     const dateISO = isoWeekDayToISODate(weekIdentifier, dayId);
-    const eveningStart = new Date(`${dateISO}T16:00:00`);
+    const eveningStart = new Date(`${dateISO}T15:00:00`);
     const eveningEnd = new Date(`${dateISO}T21:00:00`);
 
     const hasOverlap = events.some(
@@ -319,7 +319,7 @@ function buildWeekEveningEvents(
 
   for (let dayId = 0; dayId <= 6; dayId += 1) {
     const dateISO = isoWeekDayToISODate(weekIdentifier, dayId);
-    const eveningStart = new Date(`${dateISO}T16:00:00`);
+    const eveningStart = new Date(`${dateISO}T15:00:00`);
     const eveningEnd = new Date(`${dateISO}T21:00:00`);
 
     const overlaps = events
@@ -754,10 +754,10 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
               <span className="inline-flex items-center gap-1">
                 {day.substring(0, 3)}
                 {busyEveningDays.has(idx) && (
-                  <span
-                    className="inline-block h-1.5 w-1.5 rounded-full bg-amber-500"
-                    title="Aktivitet mellan 16:00-21:00"
-                  />
+                    <span
+                      className="inline-block h-1.5 w-1.5 rounded-full bg-amber-500"
+                      title="Aktivitet mellan 15:00-21:00"
+                    />
                 )}
               </span>
             </button>
