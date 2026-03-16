@@ -19,8 +19,32 @@ const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
 const LAST_SELECTED_WEEK_KEY = "matplaneraren_selected_week_v1";
 const CALENDAR_ICS_URL =
   "webcal://p124-caldav.icloud.com/published/2/MjY4MDY0MTMzMjY4MDY0MZHfXvtitZZC9fN4qXJIo6P0X92JjkUY6Qwrt1VJqJnaKV6g_XnQxVr6yxa9SmulWnDQR_ZiAew1g2unqdQe5d8";
-const CALENDAR_PROXY_ENDPOINT =
-  (import.meta as any)?.env?.VITE_ICS_PROXY_URL?.trim?.() || "/api/ics";
+
+// Prioritet för proxy-endpoint:
+// 1) Explicit env: VITE_ICS_PROXY_URL
+// 2) Autobygg från VITE_SUPABASE_URL -> https://<ref>.functions.supabase.co/icloud-ics-proxy
+// 3) Dev fallback: /api/ics (Vite middleware lokalt)
+function resolveCalendarProxyEndpoint(): string {
+  const explicitProxy = (import.meta as any)?.env?.VITE_ICS_PROXY_URL?.trim?.();
+  if (explicitProxy) return explicitProxy;
+
+  const supabaseUrl = (import.meta as any)?.env?.VITE_SUPABASE_URL?.trim?.();
+  if (supabaseUrl) {
+    try {
+      const host = new URL(supabaseUrl).hostname; // ex: <ref>.supabase.co
+      const projectRef = host.replace(/\.supabase\.co$/i, "");
+      if (projectRef && projectRef !== host) {
+        return `https://${projectRef}.functions.supabase.co/icloud-ics-proxy`;
+      }
+    } catch {
+      // Ignorera parse-fel och fall tillbaka till dev-endpoint.
+    }
+  }
+
+  return "/api/ics";
+}
+
+const CALENDAR_PROXY_ENDPOINT = resolveCalendarProxyEndpoint();
 
 type CalendarEventPeriod = {
   start: Date;
@@ -289,7 +313,7 @@ function extractIcsEventPeriods(icsText: string): CalendarEventPeriod[] {
   return events;
 }
 
-// Markerar vilka dagar i vald vecka som har aktivitet som startar mellan 16:00-19:30.
+// Markerar vilka dagar i vald vecka som har aktivitet som överlappar 16:00-21:00.
 function computeBusyEveningDays(
   weekIdentifier: string,
   events: CalendarEventPeriod[]
@@ -298,15 +322,14 @@ function computeBusyEveningDays(
 
   for (let dayId = 0; dayId <= 6; dayId += 1) {
     const dateISO = isoWeekDayToISODate(weekIdentifier, dayId);
-    const eveningStartWindow = new Date(`${dateISO}T16:00:00`);
-    const eveningStartWindowEnd = new Date(`${dateISO}T19:30:00`);
+    const eveningStart = new Date(`${dateISO}T16:00:00`);
+    const eveningEnd = new Date(`${dateISO}T21:00:00`);
 
-    const hasEveningStart = events.some(
-      (event) =>
-        event.start >= eveningStartWindow && event.start <= eveningStartWindowEnd
+    const hasOverlap = events.some(
+      (event) => event.end > eveningStart && event.start < eveningEnd
     );
 
-    if (hasEveningStart) busy.add(dayId);
+    if (hasOverlap) busy.add(dayId);
   }
 
   return busy;
@@ -320,13 +343,12 @@ function buildWeekEveningEvents(
 
   for (let dayId = 0; dayId <= 6; dayId += 1) {
     const dateISO = isoWeekDayToISODate(weekIdentifier, dayId);
-    const eveningStartWindow = new Date(`${dateISO}T16:00:00`);
-    const eveningStartWindowEnd = new Date(`${dateISO}T19:30:00`);
+    const eveningStart = new Date(`${dateISO}T16:00:00`);
+    const eveningEnd = new Date(`${dateISO}T21:00:00`);
 
     const overlaps = events
       .filter(
-        (event) =>
-          event.start >= eveningStartWindow && event.start <= eveningStartWindowEnd
+        (event) => event.end > eveningStart && event.start < eveningEnd
       )
       .sort((a, b) => a.start.getTime() - b.start.getTime());
 
@@ -760,7 +782,7 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
                 {busyEveningDays.has(idx) && (
                     <span
                       className="inline-block h-1.5 w-1.5 rounded-full bg-amber-500"
-                      title="Aktivitet med start mellan 16:00-19:30"
+                      title="Aktivitet mellan 16:00-21:00"
                     />
                 )}
               </span>
