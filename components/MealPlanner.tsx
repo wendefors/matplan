@@ -159,6 +159,8 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
 
   // Fritext-draft i modalen
   const [freeTextDraft, setFreeTextDraft] = useState("");
+  const [modalSearchTerm, setModalSearchTerm] = useState("");
+  const [modalCategoryFilter, setModalCategoryFilter] = useState<string>("Alla");
 
   const currentPlan = useMemo(() => {
     return (
@@ -169,6 +171,28 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
       }
     );
   }, [plans, selectedWeek]);
+
+  const modalCategories = useMemo(() => {
+    return Array.from(new Set(recipes.map((r) => r.category))).sort((a, b) =>
+      a.localeCompare(b, "sv")
+    );
+  }, [recipes]);
+
+  const filteredModalRecipes = useMemo(() => {
+    const search = modalSearchTerm.trim().toLowerCase();
+
+    return recipes.filter((recipe) => {
+      const matchesCategory =
+        modalCategoryFilter === "Alla" || recipe.category === modalCategoryFilter;
+      if (!matchesCategory) return false;
+
+      if (!search) return true;
+      return (
+        recipe.name.toLowerCase().includes(search) ||
+        (recipe.source?.toLowerCase().includes(search) ?? false)
+      );
+    });
+  }, [recipes, modalSearchTerm, modalCategoryFilter]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -191,6 +215,8 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
         if (showRecipeModal !== null) {
           setShowRecipeModal(null);
           setFreeTextDraft("");
+          setModalSearchTerm("");
+          setModalCategoryFilter("Alla");
         }
       }
     };
@@ -557,7 +583,7 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
             return (
               <div
                 key={dayIdx}
-                className="group bg-white p-5 rounded-2xl border border-gray-100 shadow-sm hover:border-emerald-200 transition-colors"
+                className="group bg-white p-4 rounded-2xl border border-gray-100 shadow-sm hover:border-emerald-200 transition-colors"
               >
                 <div className="flex justify-between items-start mb-3">
                   <span className="text-xs font-bold text-emerald-600 uppercase tracking-wider">
@@ -665,7 +691,7 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
 
                 {recipe ? (
                   <div>
-                    <h3 className="text-base font-bold text-gray-900 leading-tight mb-1">
+                    <h3 className="text-sm md:text-base font-bold text-gray-900 leading-tight mb-1">
                       {recipe.name}
                     </h3>
                     <div className="flex flex-wrap gap-2 items-center">
@@ -679,7 +705,7 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
                   </div>
                 ) : freeText.length > 0 ? (
                   <div>
-                    <h3 className="text-base font-bold text-gray-900 leading-tight mb-1">
+                    <h3 className="text-sm md:text-base font-bold text-gray-900 leading-tight mb-1">
                       {freeText}
                     </h3>
                     <div className="flex flex-wrap gap-2 items-center">
@@ -706,11 +732,13 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fadeIn">
           <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden max-h-[80vh] flex flex-col">
             <div className="p-6 border-b border-gray-100 flex justify-between items-center">
-              <h3 className="text-xl font-bold">Välj en rätt eller skriv fritext</h3>
+              <h3 className="text-lg md:text-xl font-bold">Välj en rätt eller skriv fritext</h3>
               <button
                 onClick={() => {
                   setShowRecipeModal(null);
                   setFreeTextDraft("");
+                  setModalSearchTerm("");
+                  setModalCategoryFilter("Alla");
                 }}
                 className="text-gray-400 hover:text-gray-600"
               >
@@ -727,26 +755,69 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
             </div>
 
             <div className="flex-1 overflow-y-auto p-4 space-y-3">
+              <div className="space-y-2">
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={modalSearchTerm}
+                    onChange={(e) => setModalSearchTerm(e.target.value)}
+                    placeholder="Sök rätt..."
+                    className="w-full p-2.5 pl-9 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:border-emerald-500 focus:outline-none"
+                  />
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    className="h-4 w-4 absolute left-3 top-3 text-gray-400"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                    />
+                  </svg>
+                </div>
+
+                <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1 no-scrollbar">
+                  {["Alla", ...modalCategories].map((category) => (
+                    <button
+                      key={category}
+                      onClick={() => setModalCategoryFilter(category)}
+                      className={`whitespace-nowrap px-3 py-1.5 rounded-lg text-[11px] font-bold transition-colors ${
+                        modalCategoryFilter === category
+                          ? "bg-gray-900 text-white"
+                          : "bg-white border border-gray-200 text-gray-600"
+                      }`}
+                    >
+                      {category}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <div className="rounded-2xl border border-gray-100 bg-gray-50 p-3 space-y-2">
                 <label className="block text-[11px] font-bold text-gray-600 uppercase tracking-wide">
                   Fritext
                 </label>
-                <textarea
+                <input
+                  type="text"
                   value={freeTextDraft}
                   onChange={(e) => setFreeTextDraft(e.target.value)}
                   placeholder="Skriv valfri text..."
-                  className="w-full min-h-[64px] p-3 bg-white rounded-xl border border-gray-200 focus:border-emerald-500 focus:outline-none"
+                  className="w-full p-3 bg-white rounded-xl border border-gray-200 focus:border-emerald-500 focus:outline-none"
                 />
                 <div className="flex gap-2">
                   <button
                     onClick={() => updateDayFreeText(showRecipeModal, freeTextDraft)}
-                    className="flex-1 bg-gray-900 text-white py-2.5 rounded-xl text-sm font-bold active:scale-95 transition-transform"
+                    className="flex-1 bg-gray-900 text-white py-2.5 rounded-xl text-xs md:text-sm font-bold active:scale-95 transition-transform"
                   >
                     Spara fritext
                   </button>
                   <button
                     onClick={() => updateDayFreeText(showRecipeModal, "")}
-                    className="flex-none px-4 bg-white border border-gray-200 text-gray-700 py-2.5 rounded-xl text-sm font-bold active:scale-95 transition-transform"
+                    className="flex-none px-4 bg-white border border-gray-200 text-gray-700 py-2.5 rounded-xl text-xs md:text-sm font-bold active:scale-95 transition-transform"
                     title="Rensa fritext"
                   >
                     Rensa
@@ -761,24 +832,30 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
                 Rensa vald rätt
               </button>
 
-              {recipes.map((r) => (
+              {filteredModalRecipes.map((r) => (
                 <button
                   key={r.id}
                   onClick={() => updateDayRecipe(showRecipeModal, r.id)}
                   className="w-full text-left p-4 rounded-2xl hover:bg-emerald-50 transition-colors border-2 border-transparent hover:border-emerald-200"
                 >
                   <div className="flex justify-between items-start">
-                    <div className="font-bold text-gray-900">{r.name}</div>
+                    <div className="font-bold text-sm md:text-base text-gray-900">{r.name}</div>
                     <span className="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded font-bold uppercase">
                       {r.category}
                     </span>
                   </div>
-                  <div className="flex justify-between text-xs text-gray-400">
+                  <div className="flex justify-between text-[11px] md:text-xs text-gray-400">
                     <span>{r.source || "Okänd källa"}</span>
                     <span>Lagad: {formatDate(r.lastCooked)}</span>
                   </div>
                 </button>
               ))}
+
+              {filteredModalRecipes.length === 0 && (
+                <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-3 py-4 text-center text-xs text-gray-500">
+                  Inga rätter matchar sökning/filtrering.
+                </div>
+              )}
             </div>
           </div>
         </div>
