@@ -8,6 +8,14 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "content-type, authorization, apikey, x-client-info",
 };
 
+function normalizeFeedUrl(rawUrl: string): string {
+  const trimmed = rawUrl.trim();
+  if (trimmed.toLowerCase().startsWith("webcal://")) {
+    return `https://${trimmed.slice("webcal://".length)}`;
+  }
+  return trimmed;
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -20,7 +28,8 @@ Deno.serve(async (req) => {
     });
   }
 
-  const feedUrl = Deno.env.get("ICS_FEED_URL")?.trim();
+  const rawFeedUrl = Deno.env.get("ICS_FEED_URL")?.trim();
+  const feedUrl = rawFeedUrl ? normalizeFeedUrl(rawFeedUrl) : "";
   if (!feedUrl) {
     return new Response("Missing ICS_FEED_URL", {
       status: 500,
@@ -31,7 +40,9 @@ Deno.serve(async (req) => {
   try {
     const upstream = await fetch(feedUrl, { cache: "no-store" });
     if (!upstream.ok) {
-      return new Response(`Upstream failed (${upstream.status})`, {
+      const upstreamText = await upstream.text().catch(() => "");
+      const details = upstreamText ? `: ${upstreamText.slice(0, 200)}` : "";
+      return new Response(`Upstream failed (${upstream.status})${details}`, {
         status: 502,
         headers: corsHeaders,
       });
@@ -48,7 +59,8 @@ Deno.serve(async (req) => {
     });
   } catch (error) {
     console.error("icloud-ics-proxy error:", error);
-    return new Response("Proxy failed", {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    return new Response(`Proxy failed: ${message}`, {
       status: 500,
       headers: corsHeaders,
     });
