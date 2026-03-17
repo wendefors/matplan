@@ -1,92 +1,56 @@
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { Recipe, WeekPlan, SWEDISH_DAYS, DayPlan } from "../types";
+import {
+  ActiveDayIndices,
+  DayPlan,
+  MealSlotPlan,
+  MealSlotType,
+  Recipe,
+  SWEDISH_DAYS,
+  WeekPlan,
+} from "../types";
 import { generateICS } from "../services/icsService";
 
 interface MealPlannerProps {
   recipes: Recipe[];
   plans: WeekPlan[];
   onUpdatePlans: (plans: WeekPlan[]) => void;
-
-  // Finns kvar (t.ex. om RecipeList uppdaterar)
   onUpdateRecipes: (recipes: Recipe[]) => void;
-
-  // NYTT: uppdatera lastCooked med "rätt" datum per recept
   onMarkCooked: (updates: { id: number; lastCooked: string }[]) => Promise<void>;
 }
 
 const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
+const ALL_ACTIVE_DAYS: ActiveDayIndices = {
+  lunch: [...ALL_DAYS],
+  dinner: [...ALL_DAYS],
+};
 const LAST_SELECTED_WEEK_KEY = "matplaneraren_selected_week_v1";
 const CALENDAR_ICS_URL =
   "webcal://p124-caldav.icloud.com/published/2/MjY4MDY0MTMzMjY4MDY0MZHfXvtitZZC9fN4qXJIo6P0X92JjkUY6Qwrt1VJqJnaKV6g_XnQxVr6yxa9SmulWnDQR_ZiAew1g2unqdQe5d8";
 const FALLBACK_SUPABASE_PROJECT_REF = "rmnqaqqtdysjpstktvvr";
 
-// Prioritet för proxy-endpoint:
-// 1) Explicit env: VITE_ICS_PROXY_URL
-// 2) Autobygg från VITE_SUPABASE_URL -> https://<ref>.functions.supabase.co/icloud-ics-proxy
-// 3) Dev fallback: /api/ics (Vite middleware lokalt)
-function resolveCalendarProxyEndpoint(): string {
-  const explicitProxy = (import.meta as any)?.env?.VITE_ICS_PROXY_URL?.trim?.();
-  if (explicitProxy) return explicitProxy;
+const SLOT_LABELS: Record<MealSlotType, string> = {
+  lunch: "Lunch",
+  dinner: "Kvällsmat",
+};
 
-  const supabaseUrl = (import.meta as any)?.env?.VITE_SUPABASE_URL?.trim?.();
-  if (supabaseUrl) {
-    try {
-      const host = new URL(supabaseUrl).hostname; // ex: <ref>.supabase.co
-      const projectRef = host.replace(/\.supabase\.co$/i, "");
-      if (projectRef && projectRef !== host) {
-        return `https://${projectRef}.functions.supabase.co/icloud-ics-proxy`;
-      }
-    } catch {
-      // Ignorera parse-fel och fall tillbaka till dev-endpoint.
-    }
-  }
-
-  return "/api/ics";
-}
-
-const CALENDAR_PROXY_ENDPOINT = resolveCalendarProxyEndpoint();
-
-// Bygger en lista av kandidater så vi kan prova flera vägar i publicerad miljö.
-function buildCalendarProxyEndpointCandidates(): string[] {
-  const candidates: string[] = [];
-  const explicitProxy = (import.meta as any)?.env?.VITE_ICS_PROXY_URL?.trim?.();
-  const supabaseUrl = (import.meta as any)?.env?.VITE_SUPABASE_URL?.trim?.();
-
-  if (explicitProxy) {
-    candidates.push(explicitProxy);
-  }
-
-  if (supabaseUrl) {
-    try {
-      const host = new URL(supabaseUrl).hostname;
-      const projectRef = host.replace(/\.supabase\.co$/i, "");
-      if (projectRef && projectRef !== host) {
-        candidates.push(`https://${projectRef}.functions.supabase.co/icloud-ics-proxy`);
-      }
-    } catch {
-      // Ignorera parse-fel och gå vidare till nästa kandidat.
-    }
-  }
-
-  // Stabil fallback: projektets edge function-URL utan beroende av build-secrets.
-  candidates.push(
-    `https://${FALLBACK_SUPABASE_PROJECT_REF}.functions.supabase.co/icloud-ics-proxy`
-  );
-
-  // Endast relevant i localhost, men ofarlig att ha sist i listan.
-  candidates.push("/api/ics");
-
-  // Rensa dubletter, bevara ordning.
-  return Array.from(new Set(candidates.filter(Boolean)));
-}
-
-const CALENDAR_PROXY_ENDPOINT_CANDIDATES = buildCalendarProxyEndpointCandidates();
+type DayEventModalTarget = number | null;
+type RecipeModalTarget = { dayId: number; slot: MealSlotType } | null;
 
 type CalendarEventPeriod = {
   start: Date;
   end: Date;
   summary: string;
+  description: string;
+};
+
+type RawCalendarEvent = {
+  start: Date;
+  end: Date;
+  summary: string;
+  description: string;
+  rrule: string | null;
+  exdates: Date[];
 };
 
 function getCurrentIsoWeek(): string {
@@ -133,82 +97,35 @@ function shiftIsoWeek(weekIdentifier: string, deltaWeeks: number): string {
   return dateToIsoWeek(monday);
 }
 
-function getRecencyBonus(lastCooked: string | null): number {
-  if (!lastCooked) return 20;
-
-  const lastCookedDate = new Date(lastCooked);
-  if (Number.isNaN(lastCookedDate.getTime())) return 0;
-
-  const diffDays = Math.floor(
-    (Date.now() - lastCookedDate.getTime()) / (1000 * 60 * 60 * 24)
-  );
-
-  if (!Number.isFinite(diffDays)) return 0;
-  return Math.max(0, Math.min(diffDays, 30));
-}
-
-function pickWeightedRecipe(
-  candidates: Recipe[],
-  excludeCategories: Set<string>
-): Recipe | null {
-  if (candidates.length === 0) return null;
-
-  const weightedCandidates = candidates.map((recipe) => {
-    let score = 100 + getRecencyBonus(recipe.lastCooked);
-
-    if (excludeCategories.has(recipe.category)) {
-      score -= 40;
-    }
-
-    return {
-      recipe,
-      score: Math.max(1, score),
-    };
-  });
-
-  const totalWeight = weightedCandidates.reduce(
-    (sum, candidate) => sum + candidate.score,
-    0
-  );
-
-  let randomWeight = Math.random() * totalWeight;
-
-  for (const candidate of weightedCandidates) {
-    randomWeight -= candidate.score;
-    if (randomWeight <= 0) {
-      return candidate.recipe;
-    }
-  }
-
-  return weightedCandidates[weightedCandidates.length - 1].recipe;
-}
-
 function isoWeekDayToISODate(weekIdentifier: string, dayId: number): string {
-  // weekIdentifier: "2026-W02"
   const match = /^(\d{4})-W(\d{2})$/.exec(weekIdentifier);
   if (!match) {
-    // fallback: idag (ska inte hända om input type="week" används)
     return new Date().toISOString().slice(0, 10);
   }
 
   const year = Number(match[1]);
   const week = Number(match[2]);
-
-  // ISO week algorithm (UTC-safe)
-  // Week 1 = week with Jan 4
   const jan4 = new Date(Date.UTC(year, 0, 4));
-  const jan4IsoDow = jan4.getUTCDay() || 7; // 1..7 (Mon..Sun)
-
+  const jan4IsoDow = jan4.getUTCDay() || 7;
   const week1Monday = new Date(jan4);
-  week1Monday.setUTCDate(jan4.getUTCDate() - (jan4IsoDow - 1)); // Monday of week 1
-
+  week1Monday.setUTCDate(jan4.getUTCDate() - (jan4IsoDow - 1));
   const target = new Date(week1Monday);
   target.setUTCDate(week1Monday.getUTCDate() + (week - 1) * 7 + dayId);
-
-  return target.toISOString().slice(0, 10); // YYYY-MM-DD
+  return target.toISOString().slice(0, 10);
 }
 
-// iCloud delar ofta URL som webcal:// - konvertera till https:// för fetch.
+function getDefaultSlotPlan(): MealSlotPlan {
+  return { recipeId: null, freeText: null };
+}
+
+function getDefaultDayPlan(dayId: number): DayPlan {
+  return {
+    dayId,
+    lunch: getDefaultSlotPlan(),
+    dinner: getDefaultSlotPlan(),
+  };
+}
+
 function normalizeCalendarUrl(url: string): string {
   const trimmed = url.trim();
   if (trimmed.toLowerCase().startsWith("webcal://")) {
@@ -217,17 +134,58 @@ function normalizeCalendarUrl(url: string): string {
   return trimmed;
 }
 
-// Väljer proxy-url:
-// - localhost/dev: /api/ics?url=... (Vite middleware)
-// - publicerad miljö: VITE_ICS_PROXY_URL (Supabase Edge Function)
-function buildCalendarProxyRequestUrl(normalizedCalendarUrl: string): string {
-  if (CALENDAR_PROXY_ENDPOINT === "/api/ics") {
-    return `/api/ics?url=${encodeURIComponent(normalizedCalendarUrl)}`;
+function resolveCalendarProxyEndpoint(): string {
+  const explicitProxy = (import.meta as any)?.env?.VITE_ICS_PROXY_URL?.trim?.();
+  if (explicitProxy) return explicitProxy;
+
+  const supabaseUrl = (import.meta as any)?.env?.VITE_SUPABASE_URL?.trim?.();
+  if (supabaseUrl) {
+    try {
+      const host = new URL(supabaseUrl).hostname;
+      const projectRef = host.replace(/\.supabase\.co$/i, "");
+      if (projectRef && projectRef !== host) {
+        return `https://${projectRef}.functions.supabase.co/icloud-ics-proxy`;
+      }
+    } catch {
+      // fallback nedan.
+    }
   }
-  return `${CALENDAR_PROXY_ENDPOINT}?t=${Date.now()}`;
+
+  return "/api/ics";
 }
 
-// Samma som ovan men för valfri endpoint-kandidat.
+const CALENDAR_PROXY_ENDPOINT = resolveCalendarProxyEndpoint();
+
+function buildCalendarProxyEndpointCandidates(): string[] {
+  const candidates: string[] = [];
+  const explicitProxy = (import.meta as any)?.env?.VITE_ICS_PROXY_URL?.trim?.();
+  const supabaseUrl = (import.meta as any)?.env?.VITE_SUPABASE_URL?.trim?.();
+
+  if (explicitProxy) candidates.push(explicitProxy);
+
+  if (supabaseUrl) {
+    try {
+      const host = new URL(supabaseUrl).hostname;
+      const projectRef = host.replace(/\.supabase\.co$/i, "");
+      if (projectRef && projectRef !== host) {
+        candidates.push(`https://${projectRef}.functions.supabase.co/icloud-ics-proxy`);
+      }
+    } catch {
+      // Ignorera parse-fel.
+    }
+  }
+
+  candidates.push(
+    `https://${FALLBACK_SUPABASE_PROJECT_REF}.functions.supabase.co/icloud-ics-proxy`
+  );
+  candidates.push(CALENDAR_PROXY_ENDPOINT);
+  candidates.push("/api/ics");
+
+  return Array.from(new Set(candidates.filter(Boolean)));
+}
+
+const CALENDAR_PROXY_ENDPOINT_CANDIDATES = buildCalendarProxyEndpointCandidates();
+
 function buildCalendarProxyRequestUrlForEndpoint(
   endpoint: string,
   normalizedCalendarUrl: string
@@ -238,7 +196,6 @@ function buildCalendarProxyRequestUrlForEndpoint(
   return `${endpoint}?t=${Date.now()}`;
 }
 
-// Enkel parser för vanliga iCalendar-datumformat.
 function parseIcsDateValue(rawValue: string): Date | null {
   const value = rawValue.trim();
 
@@ -280,49 +237,235 @@ function decodeIcsText(rawValue: string): string {
     .replace(/\\\\/g, "\\");
 }
 
-// Normaliserar text för robust jämförelse (t.ex. "Tacos", " tacos ", "TACOS").
 function normalizeSummaryForMatch(value: string): string {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, " ");
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
-// Plockar ut grundläggande VEVENT-intervall ur en ICS-text.
-function extractIcsEventPeriods(icsText: string): CalendarEventPeriod[] {
+function parseIcsDateList(rawValue: string): Date[] {
+  return rawValue
+    .split(",")
+    .map((part) => parseIcsDateValue(part))
+    .filter((date): date is Date => date !== null);
+}
+
+function parseRRule(rawRule: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  rawRule.split(";").forEach((part) => {
+    const [key, ...rest] = part.split("=");
+    if (!key) return;
+    out[key.trim().toUpperCase()] = rest.join("=").trim();
+  });
+  return out;
+}
+
+function getWeekRange(weekIdentifier: string): { start: Date; end: Date } {
+  const mondayIso = isoWeekDayToISODate(weekIdentifier, 0);
+  const start = new Date(`${mondayIso}T00:00:00`);
+  const end = new Date(start);
+  end.setDate(start.getDate() + 7);
+  return { start, end };
+}
+
+function expandRecurringEventForWeek(
+  rawEvent: RawCalendarEvent,
+  weekIdentifier: string
+): CalendarEventPeriod[] {
+  const range = getWeekRange(weekIdentifier);
+  const rangeStart = new Date(range.start.getTime() - 24 * 60 * 60 * 1000);
+  const rangeEnd = new Date(range.end.getTime() + 24 * 60 * 60 * 1000);
+  const durationMs = Math.max(1, rawEvent.end.getTime() - rawEvent.start.getTime());
+  const exdateSet = new Set(rawEvent.exdates.map((date) => date.getTime()));
+
+  const makeEvent = (start: Date): CalendarEventPeriod | null => {
+    if (exdateSet.has(start.getTime())) return null;
+    const end = new Date(start.getTime() + durationMs);
+    if (end <= rangeStart || start >= rangeEnd) return null;
+    return {
+      start,
+      end,
+      summary: rawEvent.summary,
+      description: rawEvent.description,
+    };
+  };
+
+  if (!rawEvent.rrule) {
+    const single = makeEvent(rawEvent.start);
+    return single ? [single] : [];
+  }
+
+  const rule = parseRRule(rawEvent.rrule);
+  const freq = (rule.FREQ || "").toUpperCase();
+  const interval = Math.max(1, Number(rule.INTERVAL || "1"));
+  const count = Number(rule.COUNT || "0");
+  const until = rule.UNTIL ? parseIcsDateValue(rule.UNTIL) : null;
+  const byDayTokens = (rule.BYDAY || "")
+    .split(",")
+    .map((s) => s.trim().toUpperCase())
+    .filter(Boolean);
+  const byMonthDays = (rule.BYMONTHDAY || "")
+    .split(",")
+    .map((s) => Number(s.trim()))
+    .filter((n) => Number.isInteger(n) && n !== 0);
+
+  const dayTokenToJsDay: Record<string, number> = {
+    SU: 0,
+    MO: 1,
+    TU: 2,
+    WE: 3,
+    TH: 4,
+    FR: 5,
+    SA: 6,
+  };
+
+  const results: CalendarEventPeriod[] = [];
+  let emittedCount = 0;
+  const maxIterations = 5000;
+
+  const tryAdd = (start: Date): boolean => {
+    if (start < rawEvent.start) return false;
+    if (until && start > until) return true;
+    emittedCount += 1;
+    const event = makeEvent(start);
+    if (event) results.push(event);
+    if (count > 0 && emittedCount >= count) return true;
+    return false;
+  };
+
+  if (freq === "DAILY") {
+    const cursor = new Date(rawEvent.start);
+    let loops = 0;
+    while (loops < maxIterations && cursor < rangeEnd) {
+      loops += 1;
+      if (tryAdd(new Date(cursor))) break;
+      cursor.setDate(cursor.getDate() + interval);
+    }
+    return results.sort((a, b) => a.start.getTime() - b.start.getTime());
+  }
+
+  if (freq === "WEEKLY") {
+    const baseWeekStart = new Date(rawEvent.start);
+    baseWeekStart.setDate(rawEvent.start.getDate() - ((rawEvent.start.getDay() + 6) % 7));
+    const weekCursor = new Date(baseWeekStart);
+
+    const byDays =
+      byDayTokens.length > 0
+        ? byDayTokens
+            .map((token) => dayTokenToJsDay[token])
+            .filter((d) => d !== undefined)
+        : [rawEvent.start.getDay()];
+
+    let loops = 0;
+    while (loops < maxIterations && weekCursor < rangeEnd) {
+      loops += 1;
+      const weekEvents = byDays
+        .map((jsDay) => {
+          const candidate = new Date(weekCursor);
+          candidate.setDate(weekCursor.getDate() + ((jsDay + 6) % 7));
+          candidate.setHours(
+            rawEvent.start.getHours(),
+            rawEvent.start.getMinutes(),
+            rawEvent.start.getSeconds(),
+            rawEvent.start.getMilliseconds()
+          );
+          return candidate;
+        })
+        .sort((a, b) => a.getTime() - b.getTime());
+
+      for (const start of weekEvents) {
+        if (tryAdd(start)) {
+          return results.sort((a, b) => a.start.getTime() - b.start.getTime());
+        }
+      }
+
+      weekCursor.setDate(weekCursor.getDate() + interval * 7);
+    }
+
+    return results.sort((a, b) => a.start.getTime() - b.start.getTime());
+  }
+
+  if (freq === "MONTHLY") {
+    const cursor = new Date(rawEvent.start);
+    let loops = 0;
+
+    while (loops < maxIterations && cursor < rangeEnd) {
+      loops += 1;
+      const year = cursor.getFullYear();
+      const month = cursor.getMonth();
+      const monthDays = byMonthDays.length > 0 ? byMonthDays : [rawEvent.start.getDate()];
+
+      const monthEvents = monthDays
+        .map((dayOfMonth) => {
+          const candidate = new Date(year, month, dayOfMonth);
+          if (candidate.getMonth() !== month) return null;
+          candidate.setHours(
+            rawEvent.start.getHours(),
+            rawEvent.start.getMinutes(),
+            rawEvent.start.getSeconds(),
+            rawEvent.start.getMilliseconds()
+          );
+          return candidate;
+        })
+        .filter((candidate): candidate is Date => candidate !== null)
+        .sort((a, b) => a.getTime() - b.getTime());
+
+      for (const start of monthEvents) {
+        if (tryAdd(start)) {
+          return results.sort((a, b) => a.start.getTime() - b.start.getTime());
+        }
+      }
+
+      cursor.setMonth(cursor.getMonth() + interval);
+      cursor.setDate(1);
+    }
+
+    return results.sort((a, b) => a.start.getTime() - b.start.getTime());
+  }
+
+  const fallbackSingle = makeEvent(rawEvent.start);
+  return fallbackSingle ? [fallbackSingle] : [];
+}
+
+function extractIcsEventPeriods(
+  icsText: string,
+  weekIdentifier: string
+): CalendarEventPeriod[] {
   const unfolded = icsText.replace(/\r?\n[ \t]/g, "");
   const lines = unfolded.split(/\r?\n/);
-  const events: CalendarEventPeriod[] = [];
+  const rawEvents: RawCalendarEvent[] = [];
 
   let inEvent = false;
   let dtStartRaw: string | null = null;
   let dtEndRaw: string | null = null;
   let summaryRaw: string | null = null;
+  let descriptionRaw: string | null = null;
+  let rruleRaw: string | null = null;
+  const exdateRawList: string[] = [];
   let statusCancelled = false;
 
   const pushEvent = () => {
     if (!dtStartRaw || statusCancelled) return;
-
-    // Ignorera heldagsaktiviteter (DATE-format utan tid), enligt önskemål.
     if (/^\d{8}$/.test(dtStartRaw)) return;
 
     const start = parseIcsDateValue(dtStartRaw);
     if (!start) return;
 
-    // Om DTEND saknas: anta 1 timme för tidsatt event eller nästa dag för heldag.
     let end = dtEndRaw ? parseIcsDateValue(dtEndRaw) : null;
-    if (!end) {
-      end = /^\d{8}$/.test(dtStartRaw)
-        ? new Date(start.getTime() + 24 * 60 * 60 * 1000)
-        : new Date(start.getTime() + 60 * 60 * 1000);
-    }
-
-    if (end.getTime() <= start.getTime()) {
+    if (!end || end.getTime() <= start.getTime()) {
       end = new Date(start.getTime() + 60 * 60 * 1000);
     }
 
     const summary = summaryRaw ? decodeIcsText(summaryRaw).trim() : "";
-    events.push({ start, end, summary: summary || "Aktivitet" });
+    const description = descriptionRaw ? decodeIcsText(descriptionRaw).trim() : "";
+    const exdates = exdateRawList.flatMap((value) => parseIcsDateList(value));
+
+    rawEvents.push({
+      start,
+      end,
+      summary: summary || "Aktivitet",
+      description,
+      rrule: rruleRaw,
+      exdates,
+    });
   };
 
   lines.forEach((line) => {
@@ -331,6 +474,9 @@ function extractIcsEventPeriods(icsText: string): CalendarEventPeriod[] {
       dtStartRaw = null;
       dtEndRaw = null;
       summaryRaw = null;
+      descriptionRaw = null;
+      rruleRaw = null;
+      exdateRawList.length = 0;
       statusCancelled = false;
       return;
     }
@@ -342,52 +488,55 @@ function extractIcsEventPeriods(icsText: string): CalendarEventPeriod[] {
     }
 
     if (!inEvent) return;
-
     if (line.startsWith("STATUS:")) {
       statusCancelled = line.toUpperCase().includes("CANCELLED");
       return;
     }
-
     if (line.startsWith("DTSTART")) {
-      const value = line.split(":").slice(1).join(":");
-      dtStartRaw = value || null;
+      dtStartRaw = line.split(":").slice(1).join(":") || null;
       return;
     }
-
     if (line.startsWith("DTEND")) {
-      const value = line.split(":").slice(1).join(":");
-      dtEndRaw = value || null;
+      dtEndRaw = line.split(":").slice(1).join(":") || null;
       return;
     }
-
     if (line.startsWith("SUMMARY")) {
+      summaryRaw = line.split(":").slice(1).join(":") || null;
+      return;
+    }
+    if (line.startsWith("DESCRIPTION")) {
+      descriptionRaw = line.split(":").slice(1).join(":") || null;
+      return;
+    }
+    if (line.startsWith("RRULE")) {
+      rruleRaw = line.split(":").slice(1).join(":") || null;
+      return;
+    }
+    if (line.startsWith("EXDATE")) {
       const value = line.split(":").slice(1).join(":");
-      summaryRaw = value || null;
+      if (value) exdateRawList.push(value);
     }
   });
 
-  return events;
+  return rawEvents
+    .flatMap((rawEvent) => expandRecurringEventForWeek(rawEvent, weekIdentifier))
+    .sort((a, b) => a.start.getTime() - b.start.getTime());
 }
 
-// Markerar vilka dagar i vald vecka som har aktivitet som överlappar 16:00-21:00.
 function computeBusyEveningDays(
   weekIdentifier: string,
   events: CalendarEventPeriod[]
 ): Set<number> {
   const busy = new Set<number>();
-
   for (let dayId = 0; dayId <= 6; dayId += 1) {
     const dateISO = isoWeekDayToISODate(weekIdentifier, dayId);
     const eveningStart = new Date(`${dateISO}T16:00:00`);
     const eveningEnd = new Date(`${dateISO}T21:00:00`);
-
     const hasOverlap = events.some(
       (event) => event.end > eveningStart && event.start < eveningEnd
     );
-
     if (hasOverlap) busy.add(dayId);
   }
-
   return busy;
 }
 
@@ -396,22 +545,88 @@ function buildWeekEveningEvents(
   events: CalendarEventPeriod[]
 ): Map<number, CalendarEventPeriod[]> {
   const byDay = new Map<number, CalendarEventPeriod[]>();
-
   for (let dayId = 0; dayId <= 6; dayId += 1) {
     const dateISO = isoWeekDayToISODate(weekIdentifier, dayId);
     const eveningStart = new Date(`${dateISO}T16:00:00`);
     const eveningEnd = new Date(`${dateISO}T21:00:00`);
 
     const overlaps = events
-      .filter(
-        (event) => event.end > eveningStart && event.start < eveningEnd
-      )
+      .filter((event) => event.end > eveningStart && event.start < eveningEnd)
       .sort((a, b) => a.start.getTime() - b.start.getTime());
 
     if (overlaps.length > 0) byDay.set(dayId, overlaps);
   }
-
   return byDay;
+}
+
+function computeBusyDaytimeDays(
+  weekIdentifier: string,
+  events: CalendarEventPeriod[]
+): Set<number> {
+  const busy = new Set<number>();
+  for (let dayId = 0; dayId <= 6; dayId += 1) {
+    const dateISO = isoWeekDayToISODate(weekIdentifier, dayId);
+    const dayStart = new Date(`${dateISO}T11:00:00`);
+    const dayEnd = new Date(`${dateISO}T14:30:00`);
+    const hasOverlap = events.some((event) => event.end > dayStart && event.start < dayEnd);
+    if (hasOverlap) busy.add(dayId);
+  }
+  return busy;
+}
+
+function buildWeekDaytimeEvents(
+  weekIdentifier: string,
+  events: CalendarEventPeriod[]
+): Map<number, CalendarEventPeriod[]> {
+  const byDay = new Map<number, CalendarEventPeriod[]>();
+  for (let dayId = 0; dayId <= 6; dayId += 1) {
+    const dateISO = isoWeekDayToISODate(weekIdentifier, dayId);
+    const dayStart = new Date(`${dateISO}T11:00:00`);
+    const dayEnd = new Date(`${dateISO}T14:30:00`);
+
+    const overlaps = events
+      .filter((event) => event.end > dayStart && event.start < dayEnd)
+      .sort((a, b) => a.start.getTime() - b.start.getTime());
+
+    if (overlaps.length > 0) byDay.set(dayId, overlaps);
+  }
+  return byDay;
+}
+
+function getRecencyBonus(lastCooked: string | null): number {
+  if (!lastCooked) return 20;
+
+  const lastCookedDate = new Date(lastCooked);
+  if (Number.isNaN(lastCookedDate.getTime())) return 0;
+
+  const diffDays = Math.floor(
+    (Date.now() - lastCookedDate.getTime()) / (1000 * 60 * 60 * 24)
+  );
+  if (!Number.isFinite(diffDays)) return 0;
+  return Math.max(0, Math.min(diffDays, 30));
+}
+
+function pickWeightedRecipe(
+  candidates: Recipe[],
+  excludeCategories: Set<string>
+): Recipe | null {
+  if (candidates.length === 0) return null;
+
+  const weighted = candidates.map((recipe) => {
+    let score = 100 + getRecencyBonus(recipe.lastCooked);
+    if (excludeCategories.has(recipe.category)) score -= 40;
+    return { recipe, score: Math.max(1, score) };
+  });
+
+  const totalWeight = weighted.reduce((sum, c) => sum + c.score, 0);
+  let randomWeight = Math.random() * totalWeight;
+
+  for (const candidate of weighted) {
+    randomWeight -= candidate.score;
+    if (randomWeight <= 0) return candidate.recipe;
+  }
+
+  return weighted[weighted.length - 1].recipe;
 }
 
 const MealPlanner: React.FC<MealPlannerProps> = ({
@@ -423,6 +638,7 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
 }) => {
   const navigate = useNavigate();
   const location = useLocation();
+
   const [selectedWeek, setSelectedWeek] = useState(() => {
     const stored =
       typeof window !== "undefined"
@@ -431,31 +647,32 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
     return stored || getCurrentIsoWeek();
   });
 
-  const [activeDayIndices, setActiveDayIndices] = useState<number[]>(ALL_DAYS);
-  const [showRecipeModal, setShowRecipeModal] = useState<number | null>(null);
-
-  // Fritext-draft i modalen
+  const [activeDayIndices, setActiveDayIndices] =
+    useState<ActiveDayIndices>(ALL_ACTIVE_DAYS);
+  const [showRecipeModal, setShowRecipeModal] = useState<RecipeModalTarget>(null);
+  const [showDayEventsModal, setShowDayEventsModal] = useState<DayEventModalTarget>(null);
   const [freeTextDraft, setFreeTextDraft] = useState("");
   const [modalSearchTerm, setModalSearchTerm] = useState("");
   const [modalCategoryFilter, setModalCategoryFilter] = useState<string>("Alla");
+  const [busyDaytimeDays, setBusyDaytimeDays] = useState<Set<number>>(new Set());
   const [busyEveningDays, setBusyEveningDays] = useState<Set<number>>(new Set());
+  const [daytimeEventsByDay, setDaytimeEventsByDay] = useState<
+    Map<number, CalendarEventPeriod[]>
+  >(new Map());
   const [eveningEventsByDay, setEveningEventsByDay] = useState<
     Map<number, CalendarEventPeriod[]>
   >(new Map());
-  const [showDayEventsModal, setShowDayEventsModal] = useState<number | null>(null);
 
   const currentPlan = useMemo(() => {
     return (
       plans.find((p) => p.weekIdentifier === selectedWeek) || {
         weekIdentifier: selectedWeek,
         days: [],
-        activeDayIndices: ALL_DAYS,
+        activeDayIndices: ALL_ACTIVE_DAYS,
       }
     );
   }, [plans, selectedWeek]);
 
-  // Lista med rubriker som ska ignoreras i kalendern (egna måltider).
-  // Vi använder både alla receptnamn och eventuell fritext i veckoplanen.
   const excludedCalendarSummaries = useMemo(() => {
     const summarySet = new Set<string>();
 
@@ -465,15 +682,14 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
     });
 
     currentPlan.days.forEach((day) => {
-      const freeText = (day.freeText ?? "").trim();
-      if (!freeText) return;
-      const normalized = normalizeSummaryForMatch(freeText);
-      if (normalized) summarySet.add(normalized);
+      (["lunch", "dinner"] as MealSlotType[]).forEach((slot) => {
+        const freeText = (day[slot].freeText ?? "").trim();
+        if (!freeText) return;
+        summarySet.add(normalizeSummaryForMatch(freeText));
+      });
     });
 
-    // Export använder fallback-namn "Måltid" om ingen titel finns.
     summarySet.add(normalizeSummaryForMatch("Måltid"));
-
     return summarySet;
   }, [recipes, currentPlan.days]);
 
@@ -485,12 +701,10 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
 
   const filteredModalRecipes = useMemo(() => {
     const search = modalSearchTerm.trim().toLowerCase();
-
     return recipes.filter((recipe) => {
       const matchesCategory =
         modalCategoryFilter === "Alla" || recipe.category === modalCategoryFilter;
       if (!matchesCategory) return false;
-
       if (!search) return true;
       return (
         recipe.name.toLowerCase().includes(search) ||
@@ -499,142 +713,167 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
     });
   }, [recipes, modalSearchTerm, modalCategoryFilter]);
 
+  const dayIndicesToRender = useMemo(() => {
+    return ALL_DAYS.filter(
+      (dayId) =>
+        activeDayIndices.lunch.includes(dayId) ||
+        activeDayIndices.dinner.includes(dayId)
+    );
+  }, [activeDayIndices]);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
     window.localStorage.setItem(LAST_SELECTED_WEEK_KEY, selectedWeek);
   }, [selectedWeek]);
 
-  // Synka aktiva dagar både när vecka byts och när plans laddas/uppdateras.
   useEffect(() => {
-    const fromPlan =
-      currentPlan.activeDayIndices && currentPlan.activeDayIndices.length > 0
-        ? [...currentPlan.activeDayIndices].sort((a, b) => a - b)
-        : ALL_DAYS;
-
-    setActiveDayIndices(fromPlan);
-  }, [selectedWeek, currentPlan.activeDayIndices]);
+    setActiveDayIndices(currentPlan.activeDayIndices ?? ALL_ACTIVE_DAYS);
+  }, [currentPlan.activeDayIndices, selectedWeek]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        if (showDayEventsModal !== null) {
-          setShowDayEventsModal(null);
-          return;
-        }
-        if (showRecipeModal !== null) {
-          setShowRecipeModal(null);
-          setFreeTextDraft("");
-          setModalSearchTerm("");
-          setModalCategoryFilter("Alla");
-        }
+      if (event.key !== "Escape") return;
+      if (showDayEventsModal !== null) {
+        setShowDayEventsModal(null);
+        return;
+      }
+      if (showRecipeModal) {
+        setShowRecipeModal(null);
+        setFreeTextDraft("");
+        setModalSearchTerm("");
+        setModalCategoryFilter("Alla");
       }
     };
-
     window.addEventListener("keydown", onKeyDown);
-    return () => {
-      window.removeEventListener("keydown", onKeyDown);
-    };
-  }, [showRecipeModal, showDayEventsModal]);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [showDayEventsModal, showRecipeModal]);
 
-  // Hjälpare: spara aktuell veckas activeDayIndices in i plans
-  const persistActiveDaysForWeek = (newActive: number[]) => {
-    const normalized = Array.from(new Set(newActive))
-      .filter((n) => n >= 0 && n <= 6)
-      .sort((a, b) => a - b);
+  const persistActiveDaysForWeek = (next: ActiveDayIndices) => {
+    const normalized: ActiveDayIndices = {
+      lunch: Array.from(new Set(next.lunch))
+        .filter((d) => d >= 0 && d <= 6)
+        .sort((a, b) => a - b),
+      dinner: Array.from(new Set(next.dinner))
+        .filter((d) => d >= 0 && d <= 6)
+        .sort((a, b) => a - b),
+    };
 
     const otherPlans = plans.filter((p) => p.weekIdentifier !== selectedWeek);
     const existing = plans.find((p) => p.weekIdentifier === selectedWeek);
-
     const merged: WeekPlan = {
       weekIdentifier: selectedWeek,
       days: existing?.days ?? [],
       activeDayIndices: normalized,
     };
-
     onUpdatePlans([...otherPlans, merged]);
   };
 
-  const toggleDay = (idx: number) => {
+  const toggleDay = (slot: MealSlotType, idx: number) => {
     setActiveDayIndices((prev) => {
-      const next = prev.includes(idx)
-        ? prev.filter((i) => i !== idx)
-        : [...prev, idx].sort((a, b) => a - b);
+      const current = prev[slot];
+      const nextSlot = current.includes(idx)
+        ? current.filter((d) => d !== idx)
+        : [...current, idx].sort((a, b) => a - b);
 
+      const next = {
+        ...prev,
+        [slot]: nextSlot,
+      };
       persistActiveDaysForWeek(next);
       return next;
     });
   };
 
-  const updateDayPlan = (dayId: number, patch: Partial<DayPlan>) => {
+  const getDayPlan = (dayId: number): DayPlan => {
+    return currentPlan.days.find((d) => d.dayId === dayId) ?? getDefaultDayPlan(dayId);
+  };
+
+  const updateDayPlan = (dayId: number, nextDay: DayPlan) => {
     const existingPlanIdx = plans.findIndex((p) => p.weekIdentifier === selectedWeek);
     const newPlans = [...plans];
 
     if (existingPlanIdx > -1) {
       const dayIdx = newPlans[existingPlanIdx].days.findIndex((d) => d.dayId === dayId);
-
       if (dayIdx > -1) {
-        newPlans[existingPlanIdx].days[dayIdx] = {
-          ...newPlans[existingPlanIdx].days[dayIdx],
-          ...patch,
-          dayId,
-        };
+        newPlans[existingPlanIdx].days[dayIdx] = nextDay;
       } else {
-        newPlans[existingPlanIdx].days.push({
-          dayId,
-          recipeId: null,
-          freeText: null,
-          ...patch,
-        });
+        newPlans[existingPlanIdx].days.push(nextDay);
       }
-
-      // Bevara aktiva dagar för veckan
+      newPlans[existingPlanIdx].days.sort((a, b) => a.dayId - b.dayId);
       newPlans[existingPlanIdx].activeDayIndices = activeDayIndices;
     } else {
       newPlans.push({
         weekIdentifier: selectedWeek,
-        days: [
-          {
-            dayId,
-            recipeId: null,
-            freeText: null,
-            ...patch,
-          },
-        ],
-        activeDayIndices: activeDayIndices,
+        days: [nextDay],
+        activeDayIndices,
       });
     }
 
     onUpdatePlans(newPlans);
   };
 
-  const updateDayRecipe = (dayId: number, recipeId: number | null) => {
-    // Välj recept → nolla fritext
-    updateDayPlan(dayId, { recipeId, freeText: null });
-    setShowRecipeModal(null);
-    setFreeTextDraft("");
+  const updateSlotPlan = (
+    dayId: number,
+    slot: MealSlotType,
+    patch: Partial<MealSlotPlan>
+  ) => {
+    const current = getDayPlan(dayId);
+    const next: DayPlan = {
+      ...current,
+      [slot]: {
+        ...current[slot],
+        ...patch,
+      },
+    };
+    updateDayPlan(dayId, next);
   };
 
-  const updateDayFreeText = (dayId: number, text: string) => {
+  const updateDayRecipe = (dayId: number, slot: MealSlotType, recipeId: number | null) => {
+    updateSlotPlan(dayId, slot, { recipeId, freeText: null });
+    setShowRecipeModal(null);
+    setFreeTextDraft("");
+    setModalSearchTerm("");
+    setModalCategoryFilter("Alla");
+  };
+
+  const updateDayFreeText = (dayId: number, slot: MealSlotType, text: string) => {
     const cleaned = text.trim();
-    // Skriv fritext → nolla recipeId
-    updateDayPlan(dayId, { recipeId: null, freeText: cleaned.length ? cleaned : null });
+    updateSlotPlan(dayId, slot, {
+      recipeId: null,
+      freeText: cleaned.length ? cleaned : null,
+    });
     setShowRecipeModal(null);
     setFreeTextDraft("");
+    setModalSearchTerm("");
+    setModalCategoryFilter("Alla");
   };
 
-  /**
-   * Smart weighted random picker
-   */
+  const buildWeekExcludes = (exclude?: { dayId: number; slot: MealSlotType }) => {
+    const usedIds = new Set<number>();
+    const usedCategories = new Set<string>();
+
+    currentPlan.days.forEach((day) => {
+      (["lunch", "dinner"] as MealSlotType[]).forEach((slot) => {
+        if (exclude && exclude.dayId === day.dayId && exclude.slot === slot) return;
+        const recipeId = day[slot].recipeId;
+        if (recipeId == null) return;
+
+        usedIds.add(recipeId);
+        const recipe = recipes.find((x) => x.id === recipeId);
+        if (recipe) usedCategories.add(recipe.category);
+      });
+    });
+
+    return { usedIds, usedCategories };
+  };
+
   const pickSmartRecipe = (excludeIds: Set<number>, excludeCategories: Set<string>) => {
     if (recipes.length === 0) return null;
-
-    // Först: använd aldrig ett recept som redan ligger i veckan om vi har alternativ.
     const unusedRecipes = recipes.filter((recipe) => !excludeIds.has(recipe.id));
     if (unusedRecipes.length === 0) {
       return pickWeightedRecipe(recipes, excludeCategories);
     }
 
-    // Sedan: försök undvika kategori-krockar, men fall tillbaka om det behövs.
     const unusedAndNewCategory = unusedRecipes.filter(
       (recipe) => !excludeCategories.has(recipe.category)
     );
@@ -642,126 +881,91 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
     if (unusedAndNewCategory.length > 0) {
       return pickWeightedRecipe(unusedAndNewCategory, excludeCategories);
     }
-
     return pickWeightedRecipe(unusedRecipes, excludeCategories);
   };
 
-  /**
-   * Bygg veckans "upptagna" recept (för att undvika dubletter i samma vecka)
-   * excludeDayId: om angivet, exkluderas inte receptet som redan ligger på just den dagen
-   */
-  const buildWeekExcludes = (excludeDayId?: number) => {
-    const usedIds = new Set<number>();
-    const usedCategories = new Set<string>();
-
-    currentPlan.days.forEach((d) => {
-      if (excludeDayId !== undefined && d.dayId === excludeDayId) return;
-      if (d.recipeId == null) return;
-
-      usedIds.add(d.recipeId);
-
-      const r = recipes.find((x) => x.id === d.recipeId);
-      if (r) usedCategories.add(r.category);
-    });
-
-    return { usedIds, usedCategories };
-  };
-
   const randomizeAll = () => {
-    if (recipes.length === 0) return;
-
     const { usedIds, usedCategories } = buildWeekExcludes();
+    const updates = new Map<number, DayPlan>(
+      currentPlan.days.map((d) => [d.dayId, { ...d, lunch: { ...d.lunch }, dinner: { ...d.dinner } }])
+    );
 
-    const newDayPlans: DayPlan[] = activeDayIndices.map((dayId) => {
-      const selected = pickSmartRecipe(usedIds, usedCategories);
-      if (selected) {
-        usedIds.add(selected.id);
-        usedCategories.add(selected.category);
+    ALL_DAYS.forEach((dayId) => {
+      (["lunch", "dinner"] as MealSlotType[]).forEach((slot) => {
+        if (!activeDayIndices[slot].includes(dayId)) return;
+        const selected = pickSmartRecipe(usedIds, usedCategories);
+        const base = updates.get(dayId) ?? getDefaultDayPlan(dayId);
 
-        // Ersätt ev fritext, som du ville
-        return { dayId, recipeId: selected.id, freeText: null };
-      }
-      return { dayId, recipeId: null, freeText: null };
+        if (selected) {
+          base[slot] = { recipeId: selected.id, freeText: null };
+          usedIds.add(selected.id);
+          usedCategories.add(selected.category);
+        }
+        updates.set(dayId, base);
+      });
     });
 
-    // Behåll övriga dagar som inte är aktiva (om de finns i planen)
-    const existingOtherDays = currentPlan.days.filter((d) => !activeDayIndices.includes(d.dayId));
-
-    const mergedDays = [...existingOtherDays, ...newDayPlans].sort((a, b) => a.dayId - b.dayId);
-
+    const mergedDays = Array.from(updates.values()).sort((a, b) => a.dayId - b.dayId);
     const otherPlans = plans.filter((p) => p.weekIdentifier !== selectedWeek);
-
     onUpdatePlans([
       ...otherPlans,
       { weekIdentifier: selectedWeek, days: mergedDays, activeDayIndices },
     ]);
   };
 
-  const randomizeDay = (dayId: number) => {
-    const { usedIds, usedCategories } = buildWeekExcludes(dayId);
-
+  const randomizeSlot = (dayId: number, slot: MealSlotType) => {
+    const { usedIds, usedCategories } = buildWeekExcludes({ dayId, slot });
     const selected = pickSmartRecipe(usedIds, usedCategories);
-    if (selected) {
-      // Ersätt även fritext om den fanns
-      updateDayPlan(dayId, { recipeId: selected.id, freeText: null });
-    }
+    if (!selected) return;
+    updateSlotPlan(dayId, slot, { recipeId: selected.id, freeText: null });
   };
 
-  const getDayPlan = (dayIdx: number) => currentPlan.days.find((d) => d.dayId === dayIdx);
-
   const handleExportAll = () => {
-    const activePlans = currentPlan.days.filter((d) => {
-      if (!activeDayIndices.includes(d.dayId)) return false;
-
-      const hasRecipe = d.recipeId !== null;
-      const hasText = !!(d.freeText && d.freeText.trim().length > 0);
-
-      return hasRecipe || hasText;
+    generateICS(selectedWeek, currentPlan.days, recipes, {
+      activeDayIndices,
     });
-
-    if (activePlans.length === 0) return;
-
-    // Exportera kalenderfilen (alla valda dagar) – INGEN DB-uppdatering här
-    generateICS(selectedWeek, activePlans, recipes);
   };
 
   const handleExportDay = (dayId: number) => {
-    const plan = currentPlan.days.find((d) => d.dayId === dayId);
-    if (!plan) return;
+    const day = getDayPlan(dayId);
+    const slots = (["lunch", "dinner"] as MealSlotType[]).filter((slot) =>
+      activeDayIndices[slot].includes(dayId)
+    );
+    if (slots.length === 0) return;
 
-    const hasRecipe = plan.recipeId !== null;
-    const hasText = !!(plan.freeText && plan.freeText.trim().length > 0);
-    if (!hasRecipe && !hasText) return;
-
-    // Exportera kalenderfilen (en dag / en event)
     const dayShort = SWEDISH_DAYS[dayId].substring(0, 3);
-    generateICS(selectedWeek, [plan], recipes, { fileName: `matplan-${selectedWeek}-${dayShort}` });
+    generateICS(selectedWeek, [day], recipes, {
+      fileName: `matplan-${selectedWeek}-${dayShort}`,
+      slots,
+      activeDayIndices: {
+        lunch: activeDayIndices.lunch.includes(dayId) ? [dayId] : [],
+        dinner: activeDayIndices.dinner.includes(dayId) ? [dayId] : [],
+      },
+    });
   };
 
   const handleSaveCookedAll = async () => {
-    // Bygg id -> lastCooked (senaste dagen i veckan vinner om samma recept upprepas)
     const byRecipeId = new Map<number, string>();
 
-    currentPlan.days.forEach((d) => {
-      if (!activeDayIndices.includes(d.dayId)) return;
-      if (d.recipeId == null) return;
+    currentPlan.days.forEach((day) => {
+      (["lunch", "dinner"] as MealSlotType[]).forEach((slot) => {
+        if (!activeDayIndices[slot].includes(day.dayId)) return;
+        const recipeId = day[slot].recipeId;
+        if (recipeId == null) return;
 
-      const cookDate = isoWeekDayToISODate(selectedWeek, d.dayId);
-      const existing = byRecipeId.get(d.recipeId);
-
-      // ISO YYYY-MM-DD kan jämföras som sträng
-      if (!existing || cookDate > existing) {
-        byRecipeId.set(d.recipeId, cookDate);
-      }
+        const cookDate = isoWeekDayToISODate(selectedWeek, day.dayId);
+        const existing = byRecipeId.get(recipeId);
+        if (!existing || cookDate > existing) {
+          byRecipeId.set(recipeId, cookDate);
+        }
+      });
     });
 
     const updates = Array.from(byRecipeId.entries()).map(([id, lastCooked]) => ({
       id,
       lastCooked,
     }));
-
     if (updates.length === 0) return;
-
     await onMarkCooked(updates);
   };
 
@@ -780,66 +984,187 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
     const normalizedUrl = normalizeCalendarUrl(CALENDAR_ICS_URL);
     if (!normalizedUrl) return;
 
-    const endpointCandidates = [
-      ...CALENDAR_PROXY_ENDPOINT_CANDIDATES,
-      CALENDAR_PROXY_ENDPOINT,
-    ];
-    const uniqueCandidates = Array.from(new Set(endpointCandidates.filter(Boolean)));
-
-    for (const endpoint of uniqueCandidates) {
+    for (const endpoint of CALENDAR_PROXY_ENDPOINT_CANDIDATES) {
       try {
-        const requestUrl = buildCalendarProxyRequestUrlForEndpoint(
-          endpoint,
-          normalizedUrl
-        );
+        const requestUrl = buildCalendarProxyRequestUrlForEndpoint(endpoint, normalizedUrl);
         const response = await fetch(requestUrl, { cache: "no-store" });
         const responseText = await response.text();
 
         if (!response.ok) {
-          console.warn("CALENDAR SYNC ENDPOINT FAILED:", {
-            endpoint,
-            status: response.status,
-            body: responseText.slice(0, 200),
-          });
           continue;
         }
 
-        const events = extractIcsEventPeriods(responseText);
-
-        // Exkludera händelser som ser ut som våra egna matplans-poster.
+        const events = extractIcsEventPeriods(responseText, selectedWeek);
         const filteredEvents = events.filter((event) => {
           const normalizedSummary = normalizeSummaryForMatch(event.summary);
+          const hasExportTag = /X-MATPLAN-EXPORT:1/i.test(event.description);
+          if (hasExportTag) return false;
           if (!normalizedSummary) return true;
           return !excludedCalendarSummaries.has(normalizedSummary);
         });
 
-        const busyDays = computeBusyEveningDays(selectedWeek, filteredEvents);
-        const eveningByDay = buildWeekEveningEvents(selectedWeek, filteredEvents);
-        setBusyEveningDays(busyDays);
-        setEveningEventsByDay(eveningByDay);
+        setBusyDaytimeDays(computeBusyDaytimeDays(selectedWeek, filteredEvents));
+        setBusyEveningDays(computeBusyEveningDays(selectedWeek, filteredEvents));
+        setDaytimeEventsByDay(buildWeekDaytimeEvents(selectedWeek, filteredEvents));
+        setEveningEventsByDay(buildWeekEveningEvents(selectedWeek, filteredEvents));
         return;
-      } catch (error) {
-        console.warn("CALENDAR SYNC NETWORK ERROR:", {
-          endpoint,
-          error,
-        });
+      } catch {
+        // Prova nästa endpoint-kandidat.
       }
     }
 
-    console.error("CALENDAR SYNC FAILED: no endpoint candidate succeeded");
+    setBusyDaytimeDays(new Set());
     setBusyEveningDays(new Set());
+    setDaytimeEventsByDay(new Map());
     setEveningEventsByDay(new Map());
   };
 
-  // Synka när vecka ändras (körs även för initial vecka).
   useEffect(() => {
     void syncCalendarBusyDays();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedWeek, excludedCalendarSummaries]);
+
+  const renderMealSection = (dayId: number, slot: MealSlotType) => {
+    if (!activeDayIndices[slot].includes(dayId)) return null;
+
+    const dayPlan = getDayPlan(dayId);
+    const slotPlan = dayPlan[slot];
+    const recipe =
+      slotPlan.recipeId != null
+        ? recipes.find((r) => r.id === slotPlan.recipeId) ?? null
+        : null;
+    const freeText = (slotPlan.freeText ?? "").trim();
+    const hasSomething = !!recipe || freeText.length > 0;
+
+    return (
+      <div key={`${dayId}-${slot}`} className="rounded-xl border border-gray-100 bg-gray-50 p-2.5">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-gray-500">
+              {SLOT_LABELS[slot]}
+            </p>
+            {recipe ? (
+              <>
+                <h3 className="text-sm md:text-base font-bold text-gray-900 leading-tight">
+                  {recipe.name}
+                </h3>
+                <div className="flex flex-wrap gap-2 items-center mt-1">
+                  <span className="text-[9px] bg-emerald-50 text-emerald-600 px-1.5 py-0.5 rounded font-bold uppercase tracking-tighter">
+                    {recipe.category}
+                  </span>
+                  <span className="text-[9px] text-gray-400">
+                    Lagad: {formatDate(recipe.lastCooked)}
+                  </span>
+                </div>
+              </>
+            ) : freeText ? (
+              <>
+                <h3 className="text-sm md:text-base font-bold text-gray-900 leading-tight">
+                  {freeText}
+                </h3>
+                <span className="inline-block mt-1 text-[9px] bg-white border border-gray-200 text-gray-500 px-1.5 py-0.5 rounded font-bold uppercase tracking-tighter">
+                  Fritext
+                </span>
+              </>
+            ) : (
+              <p className="text-xs text-gray-400 italic mt-0.5">Ingen rätt vald...</p>
+            )}
+          </div>
+
+          <div className="flex gap-1.5 shrink-0 pl-1">
+            <button
+              onClick={() => randomizeSlot(dayId, slot)}
+              className="p-1.5 text-gray-400 hover:text-emerald-500 bg-white rounded-lg border border-gray-200 transition-colors"
+              title={`Slumpa ${SLOT_LABELS[slot].toLowerCase()}`}
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                className="h-4 w-4"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                />
+              </svg>
+            </button>
+            <button
+              onClick={() => {
+                setShowRecipeModal({ dayId, slot });
+                setFreeTextDraft((slotPlan.freeText ?? "").trim());
+              }}
+              className="p-1.5 text-gray-400 hover:text-emerald-500 bg-white rounded-lg border border-gray-200 transition-colors"
+              title={`Välj rätt för ${SLOT_LABELS[slot].toLowerCase()}`}
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                className="h-4 w-4"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+                />
+              </svg>
+            </button>
+            <button
+              onClick={() =>
+                recipe
+                  ? navigate(`/recipes/${recipe.id}/view`, {
+                      state: { from: `${location.pathname}${location.search}` },
+                    })
+                  : null
+              }
+              disabled={!recipe}
+              className="p-1.5 text-gray-400 hover:text-emerald-500 bg-white rounded-lg border border-gray-200 transition-colors disabled:opacity-40"
+              title="Visa recept"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                className="h-4 w-4"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M15 12H9m12 0c0 1.657-3.582 6-9 6s-9-4.343-9-6 3.582-6 9-6 9 4.343 9 6zm-9 3a3 3 0 100-6 3 3 0 000 6z"
+                />
+              </svg>
+            </button>
+            <button
+              onClick={() => updateDayRecipe(dayId, slot, null)}
+              disabled={!hasSomething}
+              className="p-1.5 text-gray-400 hover:text-red-500 bg-white rounded-lg border border-gray-200 transition-colors disabled:opacity-40"
+              title="Rensa vald rätt"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                className="h-4 w-4"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="space-y-8 animate-fadeIn">
-      {/* Week Selector */}
       <section className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
         <label className="block text-sm font-semibold text-gray-700 mb-2">Välj vecka</label>
         <div className="flex items-center gap-2">
@@ -868,40 +1193,55 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
             →
           </button>
         </div>
-
       </section>
 
-      {/* Day Checklist */}
-      <section className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
-        <label className="block text-sm font-semibold text-gray-700 mb-3">
+      <section className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 space-y-3">
+        <label className="block text-sm font-semibold text-gray-700">
           Vilka dagar planerar vi för?
         </label>
-        <div className="flex flex-wrap gap-2">
-          {SWEDISH_DAYS.map((day, idx) => (
-            <button
-              key={day}
-              onClick={() => toggleDay(idx)}
-              className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all ${
-                activeDayIndices.includes(idx)
-                  ? "bg-emerald-100 text-emerald-700 ring-2 ring-emerald-500"
-                  : "bg-gray-100 text-gray-500 border border-transparent"
-              }`}
-            >
-              <span className="inline-flex items-center gap-1">
-                {day.substring(0, 3)}
-                {busyEveningDays.has(idx) && (
-                    <span
-                      className="inline-block h-1.5 w-1.5 rounded-full bg-amber-500"
-                      title="Aktivitet mellan 16:00-21:00"
-                    />
-                )}
-              </span>
-            </button>
-          ))}
-        </div>
+
+        {(["lunch", "dinner"] as MealSlotType[]).map((slot) => (
+          <div key={slot} className="space-y-2">
+            <span className="block text-[11px] font-bold text-gray-600 uppercase tracking-wide">
+              {SLOT_LABELS[slot]}
+            </span>
+            <div className="grid grid-cols-7 gap-1.5">
+              {SWEDISH_DAYS.map((day, idx) => {
+                const isActive = activeDayIndices[slot].includes(idx);
+                const hasDaytime = slot === "lunch" && busyDaytimeDays.has(idx);
+                const hasEvening = slot === "dinner" && busyEveningDays.has(idx);
+                return (
+                  <button
+                    key={`${slot}-${day}`}
+                    onClick={() => toggleDay(slot, idx)}
+                    className={`relative min-w-0 px-1.5 py-2 rounded-lg text-[10px] font-bold transition-all ${
+                      isActive
+                        ? "bg-emerald-100 text-emerald-700 ring-1 ring-emerald-500"
+                        : "bg-gray-100 text-gray-500 border border-transparent"
+                    }`}
+                    title={day}
+                  >
+                    <span>{day.substring(0, 3)}</span>
+                    {hasDaytime && (
+                      <span
+                        className="absolute top-1 right-1 inline-block h-1.5 w-1.5 rounded-full bg-sky-500"
+                        title="Aktivitet mellan 11:00-14:30"
+                      />
+                    )}
+                    {hasEvening && (
+                      <span
+                        className="absolute top-1 right-1 inline-block h-1.5 w-1.5 rounded-full bg-amber-500"
+                        title="Aktivitet mellan 16:00-21:00"
+                      />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
       </section>
 
-      {/* Main Controls */}
       <div className="flex gap-3">
         <button
           onClick={randomizeAll}
@@ -909,8 +1249,6 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
         >
           Slumpa fram allt
         </button>
-
-        {/* Export all */}
         <button
           onClick={handleExportAll}
           className="flex-none bg-gray-900 text-white p-4 rounded-2xl shadow-lg shadow-gray-200 active:scale-95 transition-transform"
@@ -931,12 +1269,10 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
             />
           </svg>
         </button>
-
-        {/* Save cooked */}
         <button
           onClick={handleSaveCookedAll}
           className="flex-none bg-emerald-50 text-emerald-700 p-4 rounded-2xl shadow-sm border border-emerald-100 active:scale-95 transition-transform"
-          title="Spara samtliga planerade rätter som lagade (med datum från veckan)"
+          title="Spara samtliga planerade rätter som lagade"
         >
           <svg
             xmlns="http://www.w3.org/2000/svg"
@@ -955,167 +1291,62 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
         </button>
       </div>
 
-      {/* Planning List */}
       <div className="space-y-4">
-        {activeDayIndices.length > 0 ? (
-          activeDayIndices.map((dayIdx) => {
-            const plan = currentPlan.days.find((d) => d.dayId === dayIdx);
-            const recipe =
-              plan?.recipeId != null ? recipes.find((r) => r.id === plan.recipeId) : null;
-            const freeText = (plan?.freeText ?? "").trim();
-            const hasSomething = !!recipe || freeText.length > 0;
-            const hasEveningActivity = busyEveningDays.has(dayIdx);
-
+        {dayIndicesToRender.length > 0 ? (
+          dayIndicesToRender.map((dayId) => {
+            const hasDaytimeActivity = busyDaytimeDays.has(dayId);
+            const hasEveningActivity = busyEveningDays.has(dayId);
             return (
               <div
-                key={dayIdx}
-                className="group bg-white p-4 rounded-2xl border border-gray-100 shadow-sm hover:border-emerald-200 transition-colors"
+                key={dayId}
+                className="group bg-white p-3 rounded-2xl border border-gray-100 shadow-sm hover:border-emerald-200 transition-colors space-y-2"
                 onClick={(event) => {
                   const target = event.target as HTMLElement;
                   if (target.closest("button")) return;
-                  if (!hasEveningActivity) return;
-                  setShowDayEventsModal(dayIdx);
+                  if (!hasDaytimeActivity && !hasEveningActivity) return;
+                  setShowDayEventsModal(dayId);
                 }}
               >
-                <div className="flex justify-between items-start mb-3">
-                  <div className="flex flex-wrap items-center gap-2">
+                <div className="flex justify-between items-center">
+                  <div className="flex items-center gap-2">
                     <span className="text-xs font-bold text-emerald-600 uppercase tracking-wider">
-                      {SWEDISH_DAYS[dayIdx]}
+                      {SWEDISH_DAYS[dayId]}
                     </span>
+                    {hasDaytimeActivity && (
+                      <span className="text-[10px] bg-sky-50 text-sky-700 px-2 py-0.5 rounded-full font-semibold">
+                        Dagsaktivitet
+                      </span>
+                    )}
                     {hasEveningActivity && (
                       <span className="text-[10px] bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full font-semibold">
                         Kvällsaktivitet
                       </span>
                     )}
                   </div>
-
-                  <div className="flex gap-2">
-                    {/* Exportera en dag */}
-                    <button
-                      onClick={() => handleExportDay(dayIdx)}
-                      className="p-1.5 text-gray-400 hover:text-gray-900 bg-gray-50 rounded-lg transition-colors disabled:opacity-40 disabled:hover:text-gray-400"
-                      title="Ladda ner endast denna dag"
-                      disabled={!hasSomething}
+                  <button
+                    onClick={() => handleExportDay(dayId)}
+                    className="p-1.5 text-gray-400 hover:text-gray-900 bg-gray-50 rounded-lg transition-colors"
+                    title="Ladda ner denna dag"
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      className="h-5 w-5"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
                     >
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        className="h-5 w-5"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M12 3v10m0 0l-3-3m3 3l3-3M5 21h14"
-                        />
-                      </svg>
-                    </button>
-
-                    <button
-                      onClick={() => randomizeDay(dayIdx)}
-                      className="p-1.5 text-gray-400 hover:text-emerald-500 bg-gray-50 rounded-lg transition-colors"
-                      title="Slumpa om denna dag"
-                    >
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        className="h-5 w-5"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-                        />
-                      </svg>
-                    </button>
-
-                    <button
-                      onClick={() => {
-                        setShowRecipeModal(dayIdx);
-                        const existingFreeText = (getDayPlan(dayIdx)?.freeText ?? "").trim();
-                        setFreeTextDraft(existingFreeText);
-                      }}
-                      className="p-1.5 text-gray-400 hover:text-emerald-500 bg-gray-50 rounded-lg transition-colors"
-                      title="Välj rätt eller skriv fritext"
-                    >
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        className="h-5 w-5"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
-                        />
-                      </svg>
-                    </button>
-
-                    <button
-                      onClick={() => {
-                        if (!recipe) return;
-                        navigate(`/recipes/${recipe.id}/view`, {
-                          state: { from: `${location.pathname}${location.search}` },
-                        });
-                      }}
-                      className="p-1.5 text-gray-400 hover:text-emerald-500 bg-gray-50 rounded-lg transition-colors disabled:opacity-40"
-                      title="Visa recept"
-                      disabled={!recipe}
-                    >
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        className="h-5 w-5"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M15 12H9m12 0c0 1.657-3.582 6-9 6s-9-4.343-9-6 3.582-6 9-6 9 4.343 9 6zm-9 3a3 3 0 100-6 3 3 0 000 6z"
-                        />
-                      </svg>
-                    </button>
-                  </div>
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M12 3v10m0 0l-3-3m3 3l3-3M5 21h14"
+                      />
+                    </svg>
+                  </button>
                 </div>
 
-                {recipe ? (
-                  <div>
-                    <h3 className="text-sm md:text-base font-bold text-gray-900 leading-tight mb-1">
-                      {recipe.name}
-                    </h3>
-                    <div className="flex flex-wrap gap-2 items-center">
-                      <span className="text-[9px] bg-emerald-50 text-emerald-600 px-1.5 py-0.5 rounded font-bold uppercase tracking-tighter">
-                        {recipe.category}
-                      </span>
-                      <span className="text-[9px] text-gray-400">
-                        Lagad: {formatDate(recipe.lastCooked)}
-                      </span>
-                    </div>
-                  </div>
-                ) : freeText.length > 0 ? (
-                  <div>
-                    <h3 className="text-sm md:text-base font-bold text-gray-900 leading-tight mb-1">
-                      {freeText}
-                    </h3>
-                    <div className="flex flex-wrap gap-2 items-center">
-                      <span className="text-[9px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded font-bold uppercase tracking-tighter">
-                        Fritext
-                      </span>
-                    </div>
-                  </div>
-                ) : (
-                  <p className="text-gray-300 italic">Ingen rätt vald...</p>
-                )}
+                {renderMealSection(dayId, "lunch")}
+                {renderMealSection(dayId, "dinner")}
               </div>
             );
           })
@@ -1126,12 +1357,13 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
         )}
       </div>
 
-      {/* Recipe Selection Modal */}
-      {showRecipeModal !== null && (
+      {showRecipeModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fadeIn">
           <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden max-h-[80vh] flex flex-col">
             <div className="p-6 border-b border-gray-100 flex justify-between items-center">
-              <h3 className="text-lg md:text-xl font-bold">Välj en rätt eller skriv fritext</h3>
+              <h3 className="text-lg md:text-xl font-bold">
+                {SWEDISH_DAYS[showRecipeModal.dayId]} - {SLOT_LABELS[showRecipeModal.slot]}
+              </h3>
               <button
                 onClick={() => {
                   setShowRecipeModal(null);
@@ -1141,44 +1373,19 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
                 }}
                 className="text-gray-400 hover:text-gray-600"
               >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  className="h-6 w-6"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
+                ×
               </button>
             </div>
 
             <div className="flex-1 overflow-y-auto p-4 space-y-3">
               <div className="space-y-2">
-                <div className="relative">
-                  <input
-                    type="text"
-                    value={modalSearchTerm}
-                    onChange={(e) => setModalSearchTerm(e.target.value)}
-                    placeholder="Sök rätt..."
-                    className="w-full p-2.5 pl-9 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:border-emerald-500 focus:outline-none"
-                  />
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    className="h-4 w-4 absolute left-3 top-3 text-gray-400"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-                    />
-                  </svg>
-                </div>
-
+                <input
+                  type="text"
+                  value={modalSearchTerm}
+                  onChange={(e) => setModalSearchTerm(e.target.value)}
+                  placeholder="Sök rätt..."
+                  className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:border-emerald-500 focus:outline-none"
+                />
                 <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1 no-scrollbar">
                   {["Alla", ...modalCategories].map((category) => (
                     <button
@@ -1209,14 +1416,22 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
                 />
                 <div className="flex gap-2">
                   <button
-                    onClick={() => updateDayFreeText(showRecipeModal, freeTextDraft)}
-                    className="flex-1 bg-gray-900 text-white py-2.5 rounded-xl text-xs md:text-sm font-bold active:scale-95 transition-transform"
+                    onClick={() =>
+                      updateDayFreeText(
+                        showRecipeModal.dayId,
+                        showRecipeModal.slot,
+                        freeTextDraft
+                      )
+                    }
+                    className="flex-1 bg-gray-900 text-white py-2.5 rounded-xl text-xs md:text-sm font-bold"
                   >
                     Spara fritext
                   </button>
                   <button
-                    onClick={() => updateDayFreeText(showRecipeModal, "")}
-                    className="flex-none px-4 bg-white border border-gray-200 text-gray-700 py-2.5 rounded-xl text-xs md:text-sm font-bold active:scale-95 transition-transform"
+                    onClick={() =>
+                      updateDayFreeText(showRecipeModal.dayId, showRecipeModal.slot, "")
+                    }
+                    className="flex-none px-4 bg-white border border-gray-200 text-gray-700 py-2.5 rounded-xl text-xs md:text-sm font-bold"
                     title="Rensa fritext"
                   >
                     Rensa
@@ -1225,7 +1440,9 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
               </div>
 
               <button
-                onClick={() => updateDayRecipe(showRecipeModal, null)}
+                onClick={() =>
+                  updateDayRecipe(showRecipeModal.dayId, showRecipeModal.slot, null)
+                }
                 className="w-full text-left p-4 rounded-2xl hover:bg-gray-50 transition-colors border-2 border-transparent hover:border-gray-200 text-red-500 font-semibold"
               >
                 Rensa vald rätt
@@ -1234,7 +1451,9 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
               {filteredModalRecipes.map((r) => (
                 <button
                   key={r.id}
-                  onClick={() => updateDayRecipe(showRecipeModal, r.id)}
+                  onClick={() =>
+                    updateDayRecipe(showRecipeModal.dayId, showRecipeModal.slot, r.id)
+                  }
                   className="w-full text-left p-4 rounded-2xl hover:bg-emerald-50 transition-colors border-2 border-transparent hover:border-emerald-200"
                 >
                   <div className="flex justify-between items-start">
@@ -1249,12 +1468,6 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
                   </div>
                 </button>
               ))}
-
-              {filteredModalRecipes.length === 0 && (
-                <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-3 py-4 text-center text-xs text-gray-500">
-                  Inga rätter matchar sökning/filtrering.
-                </div>
-              )}
             </div>
           </div>
         </div>
@@ -1265,43 +1478,58 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
           <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden">
             <div className="p-5 border-b border-gray-100 flex justify-between items-center">
               <h3 className="text-base font-bold">
-                Kvällsaktivitet: {SWEDISH_DAYS[showDayEventsModal]}
+                Aktiviteter: {SWEDISH_DAYS[showDayEventsModal]}
               </h3>
               <button
                 onClick={() => setShowDayEventsModal(null)}
                 className="text-gray-400 hover:text-gray-600"
               >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  className="h-6 w-6"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M6 18L18 6M6 6l12 12"
-                  />
-                </svg>
+                ×
               </button>
             </div>
 
             <div className="p-4 space-y-2 max-h-[60vh] overflow-y-auto">
-              {(eveningEventsByDay.get(showDayEventsModal) ?? []).map((event, index) => (
-                <div
-                  key={`${event.start.toISOString()}-${event.end.toISOString()}-${index}`}
-                  className="rounded-xl border border-gray-100 bg-gray-50 p-3"
-                >
-                  <div className="text-xs font-semibold text-gray-500">
-                    {formatTime(event.start)}-{formatTime(event.end)}
-                  </div>
-                  <div className="text-sm font-semibold text-gray-900 mt-1">
-                    {event.summary}
-                  </div>
+              {(daytimeEventsByDay.get(showDayEventsModal) ?? []).length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-[11px] font-bold uppercase tracking-widest text-sky-700">
+                    Dagsaktivitet (11:00-14:30)
+                  </p>
+                  {(daytimeEventsByDay.get(showDayEventsModal) ?? []).map((event, index) => (
+                    <div
+                      key={`day-${event.start.toISOString()}-${event.end.toISOString()}-${index}`}
+                      className="rounded-xl border border-sky-100 bg-sky-50/40 p-3"
+                    >
+                      <div className="text-xs font-semibold text-gray-500">
+                        {formatTime(event.start)}-{formatTime(event.end)}
+                      </div>
+                      <div className="text-sm font-semibold text-gray-900 mt-1">
+                        {event.summary}
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              ))}
+              )}
+
+              {(eveningEventsByDay.get(showDayEventsModal) ?? []).length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-[11px] font-bold uppercase tracking-widest text-amber-700">
+                    Kvällsaktivitet (16:00-21:00)
+                  </p>
+                  {(eveningEventsByDay.get(showDayEventsModal) ?? []).map((event, index) => (
+                    <div
+                      key={`evening-${event.start.toISOString()}-${event.end.toISOString()}-${index}`}
+                      className="rounded-xl border border-amber-100 bg-amber-50/40 p-3"
+                    >
+                      <div className="text-xs font-semibold text-gray-500">
+                        {formatTime(event.start)}-{formatTime(event.end)}
+                      </div>
+                      <div className="text-sm font-semibold text-gray-900 mt-1">
+                        {event.summary}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>

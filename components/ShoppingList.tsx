@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Recipe, WeekPlan } from "../types";
+import { ActiveDayIndices, MealSlotType, Recipe, WeekPlan } from "../types";
 import { fetchRecipeFull, type RecipeFull } from "../services/recipeContentService";
 
 type ShoppingListProps = {
@@ -9,6 +9,7 @@ type ShoppingListProps = {
 
 type LoadedRecipeEntry = {
   dayId: number;
+  slot: MealSlotType;
   recipe: Recipe;
   full: RecipeFull | null;
   error: string | null;
@@ -27,6 +28,10 @@ type UnsummedIngredientRow = {
 };
 
 const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
+const ALL_ACTIVE_DAYS: ActiveDayIndices = {
+  lunch: [...ALL_DAYS],
+  dinner: [...ALL_DAYS],
+};
 const LAST_SELECTED_WEEK_KEY = "matplaneraren_selected_week_v1";
 const SHOPPING_EXCLUDED_INGREDIENTS = new Set([
   "salt",
@@ -120,7 +125,7 @@ const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
     return stored || getCurrentIsoWeek();
   });
   const [loadedEntries, setLoadedEntries] = useState<LoadedRecipeEntry[]>([]);
-  const [servingsByDay, setServingsByDay] = useState<Record<number, number>>({});
+  const [servingsByMeal, setServingsByMeal] = useState<Record<string, number>>({});
   const [manualMergeMap, setManualMergeMap] = useState<Record<string, string>>({});
   const [removedIngredientIds, setRemovedIngredientIds] = useState<Record<string, true>>({});
   const [draggingIngredientId, setDraggingIngredientId] = useState<string | null>(null);
@@ -139,41 +144,61 @@ const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
       plans.find((plan) => plan.weekIdentifier === selectedWeek) || {
         weekIdentifier: selectedWeek,
         days: [],
-        activeDayIndices: ALL_DAYS,
+        activeDayIndices: ALL_ACTIVE_DAYS,
       }
     );
   }, [plans, selectedWeek]);
 
-  const activeDayIndices = currentPlan.activeDayIndices ?? ALL_DAYS;
+  const activeDayIndices = currentPlan.activeDayIndices ?? ALL_ACTIVE_DAYS;
 
-  const activeDays = useMemo(
-    () =>
-      currentPlan.days
-        .filter((day) => activeDayIndices.includes(day.dayId))
-        .sort((a, b) => a.dayId - b.dayId),
+  const activeMeals = useMemo(
+    () => {
+      const out: Array<{
+        dayId: number;
+        slot: MealSlotType;
+        recipeId: number | null;
+        freeText: string | null;
+      }> = [];
+
+      currentPlan.days.forEach((day) => {
+        (["lunch", "dinner"] as MealSlotType[]).forEach((slot) => {
+          if (!activeDayIndices[slot]?.includes(day.dayId)) return;
+          out.push({
+            dayId: day.dayId,
+            slot,
+            recipeId: day[slot].recipeId,
+            freeText: (day[slot].freeText ?? "").trim() || null,
+          });
+        });
+      });
+
+      return out.sort((a, b) => a.dayId - b.dayId);
+    },
     [currentPlan.days, activeDayIndices]
   );
 
   const freeTextDays = useMemo(
     () =>
-      activeDays
-        .filter((day) => day.recipeId == null && day.freeText && day.freeText.trim())
-        .map((day) => ({
-          dayId: day.dayId,
-          text: day.freeText!.trim(),
+      activeMeals
+        .filter((meal) => meal.recipeId == null && meal.freeText)
+        .map((meal) => ({
+          dayId: meal.dayId,
+          slot: meal.slot,
+          text: meal.freeText!,
         })),
-    [activeDays]
+    [activeMeals]
   );
 
   const recipeDays = useMemo(
     () =>
-      activeDays
-        .filter((day) => day.recipeId != null)
-        .map((day) => ({
-          dayId: day.dayId,
-          recipe: recipes.find((recipe) => recipe.id === day.recipeId) ?? null,
+      activeMeals
+        .filter((meal) => meal.recipeId != null)
+        .map((meal) => ({
+          dayId: meal.dayId,
+          slot: meal.slot,
+          recipe: recipes.find((recipe) => recipe.id === meal.recipeId) ?? null,
         })),
-    [activeDays, recipes]
+    [activeMeals, recipes]
   );
 
   useEffect(() => {
@@ -189,6 +214,7 @@ const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
             if (!entry.recipe) {
               return {
                 dayId: entry.dayId,
+                slot: entry.slot,
                 recipe: null,
                 full: null,
                 error: "Recept saknas i listan.",
@@ -197,19 +223,21 @@ const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
 
             try {
               const full = await fetchRecipeFull(entry.recipe.id);
-              return {
-                dayId: entry.dayId,
-                recipe: entry.recipe,
-                full,
-                error: null,
+                return {
+                  dayId: entry.dayId,
+                  slot: entry.slot,
+                  recipe: entry.recipe,
+                  full,
+                  error: null,
               };
             } catch (loadError) {
               console.error("LOAD SHOPPING RECIPE FAILED:", loadError);
-              return {
-                dayId: entry.dayId,
-                recipe: entry.recipe,
-                full: null,
-                error: "Kunde inte läsa receptinnehåll.",
+                return {
+                  dayId: entry.dayId,
+                  slot: entry.slot,
+                  recipe: entry.recipe,
+                  full: null,
+                  error: "Kunde inte läsa receptinnehåll.",
               };
             }
           })
@@ -222,6 +250,7 @@ const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
             result
           ): result is {
             dayId: number;
+            slot: MealSlotType;
             recipe: Recipe;
             full: RecipeFull | null;
             error: string | null;
@@ -230,14 +259,15 @@ const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
 
         setLoadedEntries(normalizedResults);
 
-        const nextServings: Record<number, number> = {};
+        const nextServings: Record<string, number> = {};
         for (const result of normalizedResults) {
-          nextServings[result.dayId] = Math.max(
+          const key = `${result.dayId}-${result.slot}`;
+          nextServings[key] = Math.max(
             1,
             Math.round(result.recipe.baseServings || 4)
           );
         }
-        setServingsByDay(nextServings);
+        setServingsByMeal(nextServings);
       } catch (loadError) {
         if (!active) return;
         console.error("LOAD SHOPPING LIST FAILED:", loadError);
@@ -262,7 +292,11 @@ const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
       if (!entry.full || entry.full.ingredients.length === 0) continue;
 
       const baseServings = Math.max(1, Math.round(entry.recipe.baseServings || 4));
-      const selectedServings = Math.max(1, Math.round(servingsByDay[entry.dayId] || baseServings));
+      const servingsKey = `${entry.dayId}-${entry.slot}`;
+      const selectedServings = Math.max(
+        1,
+        Math.round(servingsByMeal[servingsKey] || baseServings)
+      );
       const factor = selectedServings / baseServings;
 
       for (const ingredient of entry.full.ingredients) {
@@ -305,7 +339,7 @@ const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
       summed: Array.from(summed.values()).sort((a, b) => a.name.localeCompare(b.name, "sv")),
       unsummed,
     };
-  }, [loadedEntries, servingsByDay]);
+  }, [loadedEntries, servingsByMeal]);
 
   useEffect(() => {
     setManualMergeMap({});
@@ -474,7 +508,7 @@ const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
                 <p className="text-[10px] font-bold uppercase tracking-widest text-gray-500">
-                  Dag {entry.dayId + 1}
+                  Dag {entry.dayId + 1} - {entry.slot === "lunch" ? "Lunch" : "Kvällsmat"}
                 </p>
                 <h3 className="text-sm font-bold text-gray-900 truncate">{entry.recipe.name}</h3>
               </div>
@@ -490,9 +524,12 @@ const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
                 <button
                   type="button"
                   onClick={() =>
-                    setServingsByDay((prev) => ({
+                    setServingsByMeal((prev) => ({
                       ...prev,
-                      [entry.dayId]: Math.max(1, (prev[entry.dayId] || entry.recipe.baseServings) - 1),
+                      [`${entry.dayId}-${entry.slot}`]: Math.max(
+                        1,
+                        (prev[`${entry.dayId}-${entry.slot}`] || entry.recipe.baseServings) - 1
+                      ),
                     }))
                   }
                   className="h-8 w-8 rounded-lg bg-white border border-gray-200 font-bold text-gray-700"
@@ -500,14 +537,16 @@ const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
                   -
                 </button>
                 <span className="min-w-12 text-center text-xs font-semibold text-gray-900">
-                  {servingsByDay[entry.dayId] || entry.recipe.baseServings}
+                  {servingsByMeal[`${entry.dayId}-${entry.slot}`] ||
+                    entry.recipe.baseServings}
                 </span>
                 <button
                   type="button"
                   onClick={() =>
-                    setServingsByDay((prev) => ({
+                    setServingsByMeal((prev) => ({
                       ...prev,
-                      [entry.dayId]: (prev[entry.dayId] || entry.recipe.baseServings) + 1,
+                      [`${entry.dayId}-${entry.slot}`]:
+                        (prev[`${entry.dayId}-${entry.slot}`] || entry.recipe.baseServings) + 1,
                     }))
                   }
                   className="h-8 w-8 rounded-lg bg-white border border-gray-200 font-bold text-gray-700"
@@ -647,7 +686,10 @@ const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
         ) : (
           <div className="space-y-2">
             {missingRecipeContent.map((entry) => (
-              <div key={`${entry.dayId}-${entry.recipe.id}`} className="text-xs text-gray-700">
+              <div
+                key={`${entry.dayId}-${entry.slot}-${entry.recipe.id}`}
+                className="text-xs text-gray-700"
+              >
                 <span className="font-semibold">{entry.recipe.name}</span>
                 {entry.error ? ` - ${entry.error}` : " - saknar ingredienser"}
               </div>
@@ -665,7 +707,7 @@ const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
         ) : (
           <div className="space-y-2">
             {freeTextDays.map((day) => (
-              <p key={day.dayId} className="text-xs text-gray-700">
+              <p key={`${day.dayId}-${day.slot}`} className="text-xs text-gray-700">
                 {day.text}
               </p>
             ))}

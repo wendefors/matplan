@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { HashRouter, Routes, Route, Link, useLocation } from "react-router-dom";
-import { Recipe, WeekPlan, DayPlan } from "./types";
+import { Recipe, WeekPlan, DayPlan, ActiveDayIndices, MealSlotPlan } from "./types";
 import MealPlanner from "./components/MealPlanner";
 import RecipeList from "./components/RecipeList";
 import RecipeContentEditor from "./components/RecipeContentEditor";
@@ -176,12 +176,49 @@ async function updateLastCookedUpdates(
 const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
 const NAV_HEIGHT_PX = 80;
 
-function normalizeActiveDays(v: any): number[] {
-  if (!Array.isArray(v)) return ALL_DAYS;
+function normalizeDayIndexArray(v: any): number[] {
+  if (!Array.isArray(v)) return [];
   const nums = v
     .map((x) => Number(x))
     .filter((n) => Number.isFinite(n) && n >= 0 && n <= 6);
   return Array.from(new Set(nums)).sort((a, b) => a - b);
+}
+
+// Bakåtkompatibel normalisering:
+// - gammalt format: [0,1,2...] => tolkas som middag/kvällsmat
+// - nytt format: { lunch: [...], dinner: [...] }
+function normalizeActiveDays(v: any): ActiveDayIndices {
+  if (Array.isArray(v)) {
+    return {
+      lunch: [],
+      dinner: normalizeDayIndexArray(v),
+    };
+  }
+
+  const lunch = normalizeDayIndexArray(v?.lunch);
+  const dinner = normalizeDayIndexArray(v?.dinner);
+
+  return {
+    lunch,
+    dinner: dinner.length > 0 ? dinner : ALL_DAYS,
+  };
+}
+
+function normalizeMealSlot(raw: any): MealSlotPlan {
+  const rawRecipeId = raw?.recipeId;
+  const recipeId =
+    rawRecipeId === null || rawRecipeId === undefined || rawRecipeId === ""
+      ? null
+      : Number(rawRecipeId);
+
+  const freeText = typeof raw?.freeText === "string" ? raw.freeText.trim() : null;
+  const hasText = !!(freeText && freeText.length > 0);
+  const hasRecipe = Number.isFinite(recipeId as number);
+
+  return {
+    recipeId: hasText ? null : hasRecipe ? (recipeId as number) : null,
+    freeText: hasText ? freeText : null,
+  };
 }
 
 function normalizeDayPlans(v: any): DayPlan[] {
@@ -193,23 +230,20 @@ function normalizeDayPlans(v: any): DayPlan[] {
     const dayId = Number(raw?.dayId);
     if (!Number.isFinite(dayId) || dayId < 0 || dayId > 6) continue;
 
-    const rawRecipeId = raw?.recipeId;
-    const recipeId =
-      rawRecipeId === null || rawRecipeId === undefined || rawRecipeId === ""
-        ? null
-        : Number(rawRecipeId);
+    // Bakåtkompatibilitet:
+    // - gammal dagrad med recipeId/freeText mappas till dinner
+    // - nytt format läses från lunch/dinner
+    const hasLegacyFields =
+      Object.prototype.hasOwnProperty.call(raw ?? {}, "recipeId") ||
+      Object.prototype.hasOwnProperty.call(raw ?? {}, "freeText");
 
-    const freeText =
-      typeof raw?.freeText === "string" ? raw.freeText.trim() : null;
+    const lunch = hasLegacyFields ? normalizeMealSlot(null) : normalizeMealSlot(raw?.lunch);
+    const dinner = hasLegacyFields ? normalizeMealSlot(raw) : normalizeMealSlot(raw?.dinner);
 
-    const hasText = !!(freeText && freeText.length > 0);
-    const hasRecipe = Number.isFinite(recipeId as number);
-
-    // Antingen/eller (stabil form)
     const normalized: DayPlan = {
       dayId,
-      recipeId: hasText ? null : hasRecipe ? (recipeId as number) : null,
-      freeText: hasText ? freeText : null,
+      lunch,
+      dinner,
     };
 
     out.push(normalized);
@@ -247,7 +281,7 @@ async function saveWeekPlansToSupabase(plans: WeekPlan[]): Promise<void> {
     user_id: userId,
     week_identifier: p.weekIdentifier,
     days: normalizeDayPlans(p.days),
-    active_day_indices: p.activeDayIndices ?? ALL_DAYS,
+    active_day_indices: normalizeActiveDays(p.activeDayIndices),
     updated_at: new Date().toISOString(),
   }));
 
@@ -447,7 +481,7 @@ const App: React.FC = () => {
     const normalized = newPlans.map((p) => ({
       ...p,
       days: normalizeDayPlans(p.days),
-      activeDayIndices: p.activeDayIndices ?? ALL_DAYS,
+      activeDayIndices: normalizeActiveDays(p.activeDayIndices),
     }));
 
     setPlans(normalized);

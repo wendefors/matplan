@@ -1,4 +1,4 @@
-import { DayPlan, Recipe, SWEDISH_DAYS } from "../types";
+import { ActiveDayIndices, DayPlan, MealSlotType, Recipe } from "../types";
 
 const formatDateForICS = (date: Date) => {
   return date.toISOString().replace(/[-:]/g, "").split(".")[0] + "Z";
@@ -33,10 +33,33 @@ const escapeICS = (text: string) => {
     .replace(/;/g, "\\;");
 };
 
-type GenerateIcsOptions = {
-  // om du vill ha ett specifikt filnamn (utan .ics)
-  fileName?: string;
+const SLOT_META: Record<
+  MealSlotType,
+  { label: string; startHour: number; startMinute: number; durationHours: number }
+> = {
+  lunch: { label: "Lunch", startHour: 12, startMinute: 30, durationHours: 1 },
+  dinner: { label: "Kvällsmat", startHour: 17, startMinute: 30, durationHours: 1 },
 };
+
+const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
+
+type GenerateIcsOptions = {
+  // Om du vill ha ett specifikt filnamn (utan .ics)
+  fileName?: string;
+  // Begränsa till specifika måltidstyper vid export av enstaka dag/slot.
+  slots?: MealSlotType[];
+  // Styr vilka dagar som är aktiva per slot.
+  activeDayIndices?: ActiveDayIndices;
+};
+
+function resolveActiveDays(
+  activeDayIndices: ActiveDayIndices | undefined,
+  slot: MealSlotType
+): number[] {
+  const days = activeDayIndices?.[slot];
+  if (!Array.isArray(days)) return ALL_DAYS;
+  return days;
+}
 
 export const generateICS = (
   weekString: string,
@@ -45,45 +68,59 @@ export const generateICS = (
   options?: GenerateIcsOptions
 ) => {
   const weekDates = getWeekDates(weekString);
+  const selectedSlots = options?.slots?.length ? options.slots : (["lunch", "dinner"] as MealSlotType[]);
 
-  const events = plans
-    .filter((p) => {
-      const hasRecipe = p.recipeId !== null;
-      const hasText = !!(p.freeText && p.freeText.trim().length > 0);
-      return hasRecipe || hasText;
-    })
-    .map((plan) => {
-      const date = weekDates[plan.dayId];
+  const events: string[] = [];
 
-      const recipe = plan.recipeId !== null ? recipes.find((r) => r.id === plan.recipeId) : null;
+  plans.forEach((plan) => {
+    const date = weekDates[plan.dayId];
+    if (!date) return;
+
+    selectedSlots.forEach((slot) => {
+      const activeDays = resolveActiveDays(options?.activeDayIndices, slot);
+      if (!activeDays.includes(plan.dayId)) return;
+
+      const slotPlan = plan[slot];
+      const hasRecipe = slotPlan.recipeId !== null;
+      const hasText = !!(slotPlan.freeText && slotPlan.freeText.trim().length > 0);
+      if (!hasRecipe && !hasText) return;
+
+      const recipe =
+        slotPlan.recipeId !== null
+          ? recipes.find((r) => r.id === slotPlan.recipeId)
+          : null;
       const title =
-        recipe?.name?.trim() ||
-        (plan.freeText ? plan.freeText.trim() : "") ||
-        "Måltid";
+        recipe?.name?.trim() || (slotPlan.freeText ? slotPlan.freeText.trim() : "") || SLOT_META[slot].label;
 
-      const description = recipe?.source ? `Källa: ${recipe.source}` : "";
+      // Lägg in en tydlig intern markering så vi kan ignorera egna exporter i kalenderläsning.
+      const descriptionParts = [
+        recipe?.source ? `Källa: ${recipe.source}` : "",
+        `X-MATPLAN-EXPORT:1`,
+        `X-MATPLAN-SLOT:${slot}`,
+      ].filter(Boolean);
+      const description = descriptionParts.join("\n");
 
-      // Starttid: 17:30 lokal tid
-const start = new Date(date);
-      start.setHours(17, 30, 0, 0);
-
-      // Sluttid: 18:30 lokal tid (1h senare)
+      const start = new Date(date);
+      start.setHours(SLOT_META[slot].startHour, SLOT_META[slot].startMinute, 0, 0);
       const end = new Date(start);
-      end.setHours(start.getHours() + 1);
+      end.setHours(start.getHours() + SLOT_META[slot].durationHours);
 
-      const uid = `${weekString}-${plan.dayId}-${plan.recipeId ?? "text"}@matplan`;
+      const uid = `${weekString}-${plan.dayId}-${slot}-${slotPlan.recipeId ?? "text"}@matplan`;
 
-      return [
-        "BEGIN:VEVENT",
-        `UID:${escapeICS(uid)}`,
-        `DTSTAMP:${formatDateForICS(new Date())}`,
-        `DTSTART:${formatDateForICS(start)}`,
-        `DTEND:${formatDateForICS(end)}`,
-        `SUMMARY:${escapeICS(title)}`,
-        `DESCRIPTION:${escapeICS(description)}`,
-        "END:VEVENT",
-      ].join("\n");
+      events.push(
+        [
+          "BEGIN:VEVENT",
+          `UID:${escapeICS(uid)}`,
+          `DTSTAMP:${formatDateForICS(new Date())}`,
+          `DTSTART:${formatDateForICS(start)}`,
+          `DTEND:${formatDateForICS(end)}`,
+          `SUMMARY:${escapeICS(title)}`,
+          `DESCRIPTION:${escapeICS(description)}`,
+          "END:VEVENT",
+        ].join("\n")
+      );
     });
+  });
 
   const icsContent = [
     "BEGIN:VCALENDAR",
