@@ -24,6 +24,12 @@ const ALL_ACTIVE_DAYS: ActiveDayIndices = {
   lunch: [...ALL_DAYS],
   dinner: [...ALL_DAYS],
 };
+const DEFAULT_ACTIVE_DAYS_NEW_WEEK: ActiveDayIndices = {
+  // Nya veckor: lunch endast helg
+  lunch: [5, 6],
+  // Nya veckor: kvällsmat mån-lör
+  dinner: [0, 1, 2, 3, 4, 5],
+};
 const LAST_SELECTED_WEEK_KEY = "matplaneraren_selected_week_v1";
 const CALENDAR_ICS_URL =
   "webcal://p124-caldav.icloud.com/published/2/MjY4MDY0MTMzMjY4MDY0MZHfXvtitZZC9fN4qXJIo6P0X92JjkUY6Qwrt1VJqJnaKV6g_XnQxVr6yxa9SmulWnDQR_ZiAew1g2unqdQe5d8";
@@ -668,7 +674,7 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
       plans.find((p) => p.weekIdentifier === selectedWeek) || {
         weekIdentifier: selectedWeek,
         days: [],
-        activeDayIndices: ALL_ACTIVE_DAYS,
+        activeDayIndices: DEFAULT_ACTIVE_DAYS_NEW_WEEK,
       }
     );
   }, [plans, selectedWeek]);
@@ -727,7 +733,7 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
   }, [selectedWeek]);
 
   useEffect(() => {
-    setActiveDayIndices(currentPlan.activeDayIndices ?? ALL_ACTIVE_DAYS);
+    setActiveDayIndices(currentPlan.activeDayIndices ?? DEFAULT_ACTIVE_DAYS_NEW_WEEK);
   }, [currentPlan.activeDayIndices, selectedWeek]);
 
   useEffect(() => {
