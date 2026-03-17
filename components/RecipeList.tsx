@@ -5,7 +5,7 @@ import RecipeMetaEditor from "./RecipeMetaEditor";
 
 interface RecipeListProps {
   recipes: Recipe[];
-  onUpdateRecipes: (recipes: Recipe[]) => void;
+  onUpdateRecipes: (recipes: Recipe[]) => Promise<void> | void;
   onDeleteRecipe: (id: number) => void;
   onRefreshRecipes: () => Promise<Recipe[]>;
 }
@@ -75,7 +75,11 @@ const RecipeList: React.FC<RecipeListProps> = ({
       const next = recipes.map((recipe) =>
         recipe.id === updatedRecipe.id ? updatedRecipe : recipe
       );
-      onUpdateRecipes(next);
+
+      // Viktigt: invänta skrivning till databas innan vi läser tillbaka data.
+      // Annars kan första sparningen race:a mot refresh och se ut som "ej sparad".
+      await Promise.resolve(onUpdateRecipes(next));
+
       const refreshed = await onRefreshRecipes();
       const refreshedRecipe = refreshed.find((recipe) => recipe.id === updatedRecipe.id);
       if (refreshedRecipe) setSelectedRecipe(refreshedRecipe);

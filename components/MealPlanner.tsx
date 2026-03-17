@@ -280,6 +280,14 @@ function decodeIcsText(rawValue: string): string {
     .replace(/\\\\/g, "\\");
 }
 
+// Normaliserar text för robust jämförelse (t.ex. "Tacos", " tacos ", "TACOS").
+function normalizeSummaryForMatch(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
 // Plockar ut grundläggande VEVENT-intervall ur en ICS-text.
 function extractIcsEventPeriods(icsText: string): CalendarEventPeriod[] {
   const unfolded = icsText.replace(/\r?\n[ \t]/g, "");
@@ -445,6 +453,29 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
       }
     );
   }, [plans, selectedWeek]);
+
+  // Lista med rubriker som ska ignoreras i kalendern (egna måltider).
+  // Vi använder både alla receptnamn och eventuell fritext i veckoplanen.
+  const excludedCalendarSummaries = useMemo(() => {
+    const summarySet = new Set<string>();
+
+    recipes.forEach((recipe) => {
+      const normalized = normalizeSummaryForMatch(recipe.name);
+      if (normalized) summarySet.add(normalized);
+    });
+
+    currentPlan.days.forEach((day) => {
+      const freeText = (day.freeText ?? "").trim();
+      if (!freeText) return;
+      const normalized = normalizeSummaryForMatch(freeText);
+      if (normalized) summarySet.add(normalized);
+    });
+
+    // Export använder fallback-namn "Måltid" om ingen titel finns.
+    summarySet.add(normalizeSummaryForMatch("Måltid"));
+
+    return summarySet;
+  }, [recipes, currentPlan.days]);
 
   const modalCategories = useMemo(() => {
     return Array.from(new Set(recipes.map((r) => r.category))).sort((a, b) =>
@@ -774,8 +805,16 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
         }
 
         const events = extractIcsEventPeriods(responseText);
-        const busyDays = computeBusyEveningDays(selectedWeek, events);
-        const eveningByDay = buildWeekEveningEvents(selectedWeek, events);
+
+        // Exkludera händelser som ser ut som våra egna matplans-poster.
+        const filteredEvents = events.filter((event) => {
+          const normalizedSummary = normalizeSummaryForMatch(event.summary);
+          if (!normalizedSummary) return true;
+          return !excludedCalendarSummaries.has(normalizedSummary);
+        });
+
+        const busyDays = computeBusyEveningDays(selectedWeek, filteredEvents);
+        const eveningByDay = buildWeekEveningEvents(selectedWeek, filteredEvents);
         setBusyEveningDays(busyDays);
         setEveningEventsByDay(eveningByDay);
         return;
@@ -796,7 +835,7 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
   useEffect(() => {
     void syncCalendarBusyDays();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedWeek]);
+  }, [selectedWeek, excludedCalendarSummaries]);
 
   return (
     <div className="space-y-8 animate-fadeIn">
