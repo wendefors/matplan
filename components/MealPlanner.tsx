@@ -882,6 +882,23 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
   };
 
   const randomizeAll = () => {
+    const hasExistingPlannedMeals = currentPlan.days.some((day) =>
+      (["lunch", "dinner"] as MealSlotType[]).some((slot) => {
+        if (!activeDayIndices[slot].includes(day.dayId)) return false;
+        const slotPlan = day[slot];
+        const hasRecipe = slotPlan.recipeId !== null;
+        const hasText = !!(slotPlan.freeText && slotPlan.freeText.trim().length > 0);
+        return hasRecipe || hasText;
+      })
+    );
+
+    if (hasExistingPlannedMeals) {
+      const confirmed = window.confirm(
+        "Det finns redan planerade rätter i veckan. Vill du ersätta dem med nya slumpade val?"
+      );
+      if (!confirmed) return;
+    }
+
     const { usedIds, usedCategories } = buildWeekExcludes();
     const updates = new Map<number, DayPlan>(
       currentPlan.days.map((d) => [d.dayId, { ...d, lunch: { ...d.lunch }, dinner: { ...d.dinner } }])
