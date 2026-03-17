@@ -435,6 +435,19 @@ const App: React.FC = () => {
 
   /* -------- UPDATE HANDLERS -------- */
 
+  const handleSignOut = async () => {
+    try {
+      await supabase.auth.signOut();
+    } catch (error) {
+      console.error("SIGN OUT FAILED:", error);
+    } finally {
+      // Säkerställ att UI går till utloggat läge även om nätverket strular.
+      setAuthed(false);
+      setRecipes([]);
+      setPlans([]);
+    }
+  };
+
   const handleUpdateRecipes = async (newRecipes: Recipe[]) => {
     // Optimistiskt i UI
     setRecipes(newRecipes);
@@ -539,10 +552,22 @@ const App: React.FC = () => {
     <HashRouter>
       <div className="min-h-screen flex flex-col max-w-lg mx-auto bg-white shadow-xl relative">
         <header className="px-6 pt-8 pb-4 bg-white sticky top-0 z-10 border-b border-gray-100">
-          <h1 className="text-2xl font-bold text-gray-900 tracking-tight">
-            Matplaneraren
-          </h1>
-          <p className="text-sm text-gray-500">Planera smart, ät gott.</p>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h1 className="text-2xl font-bold text-gray-900 tracking-tight">
+                Matplaneraren
+              </h1>
+              <p className="text-sm text-gray-500">Planera smart, ät gott.</p>
+            </div>
+            <button
+              type="button"
+              onClick={handleSignOut}
+              className="shrink-0 text-xs font-bold px-3 py-2 rounded-xl border border-gray-200 text-gray-600 hover:text-gray-900 hover:border-gray-300 bg-white"
+              title="Logga ut"
+            >
+              Logga ut
+            </button>
+          </div>
         </header>
 
         <main

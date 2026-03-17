@@ -21,7 +21,8 @@ View your app in AI Studio: https://ai.studio/apps/drive/15x7w5EDykmO-imRGtRkOWu
 
 ## iCloud calendar in production
 
-Appen kan markera kvällsaktiviteter (16:00-21:00) från iCloud-ICS.
+Appen kan markera dag-/kvällsaktiviteter från iCloud-ICS.
+Kalender-URL:er lagras per användare i databasen (inte i frontend-kod).
 
 ### 1) Deploy Supabase Edge Function
 
@@ -32,17 +33,32 @@ Kör:
 
 1. `supabase login`
 2. `supabase link --project-ref <DITT_PROJECT_REF>`
-3. `supabase secrets set ICS_FEED_URL="https://p124-caldav.icloud.com/published/2/..." --project-ref <DITT_PROJECT_REF>`
-4. `supabase functions deploy icloud-ics-proxy --project-ref <DITT_PROJECT_REF>`
+3. Deploy funktion: `supabase functions deploy icloud-ics-proxy --project-ref <DITT_PROJECT_REF>`
 
-### 2) Sätt frontend-env för publicerad build
+Viktigt:
+- Edge Function ska ha JWT verification **påslagen**.
+
+### 2) Skapa tabell för användarkalendrar (flera länkar per användare)
+
+Kör SQL-filen:
+`supabase/user_calendars.sql`
+
+Sätt sedan en eller flera kalenderlänkar för respektive användare, exempel:
+
+```sql
+insert into public.user_calendars (user_id, calendar_ics_url, is_active, label)
+values
+  ('<USER_ID>', 'webcal://p124-caldav.icloud.com/published/2/....', true, 'Familj'),
+  ('<USER_ID>', 'webcal://example.com/annan-kalender.ics', true, 'Skola');
+```
+
+Notering:
+- Funktionen läser endast `public.user_calendars`.
+
+### 3) Sätt frontend-env för publicerad build
 
 Sätt:
 
 `VITE_ICS_PROXY_URL=https://<DITT_PROJECT_REF>.functions.supabase.co/icloud-ics-proxy`
 
 Denna env-variabel måste finnas i buildmiljön för den publicerade sidan.
-
-### 3) Dev-läge (localhost)
-
-I localhost används automatiskt Vite-proxy `/api/ics`, så ingen extra env krävs.

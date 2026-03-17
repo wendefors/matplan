@@ -10,6 +10,7 @@ import {
   WeekPlan,
 } from "../types";
 import { generateICS } from "../services/icsService";
+import { supabase } from "../supabaseClient";
 
 interface MealPlannerProps {
   recipes: Recipe[];
@@ -31,8 +32,6 @@ const DEFAULT_ACTIVE_DAYS_NEW_WEEK: ActiveDayIndices = {
   dinner: [0, 1, 2, 3, 4, 5],
 };
 const LAST_SELECTED_WEEK_KEY = "matplaneraren_selected_week_v1";
-const CALENDAR_ICS_URL =
-  "webcal://p124-caldav.icloud.com/published/2/MjY4MDY0MTMzMjY4MDY0MZHfXvtitZZC9fN4qXJIo6P0X92JjkUY6Qwrt1VJqJnaKV6g_XnQxVr6yxa9SmulWnDQR_ZiAew1g2unqdQe5d8";
 const FALLBACK_SUPABASE_PROJECT_REF = "rmnqaqqtdysjpstktvvr";
 
 const SLOT_LABELS: Record<MealSlotType, string> = {
@@ -48,6 +47,7 @@ type CalendarEventPeriod = {
   end: Date;
   summary: string;
   description: string;
+  uid: string;
 };
 
 type RawCalendarEvent = {
@@ -55,6 +55,7 @@ type RawCalendarEvent = {
   end: Date;
   summary: string;
   description: string;
+  uid: string;
   rrule: string | null;
   exdates: Date[];
 };
@@ -132,14 +133,6 @@ function getDefaultDayPlan(dayId: number): DayPlan {
   };
 }
 
-function normalizeCalendarUrl(url: string): string {
-  const trimmed = url.trim();
-  if (trimmed.toLowerCase().startsWith("webcal://")) {
-    return `https://${trimmed.slice("webcal://".length)}`;
-  }
-  return trimmed;
-}
-
 function resolveCalendarProxyEndpoint(): string {
   const explicitProxy = (import.meta as any)?.env?.VITE_ICS_PROXY_URL?.trim?.();
   if (explicitProxy) return explicitProxy;
@@ -157,7 +150,7 @@ function resolveCalendarProxyEndpoint(): string {
     }
   }
 
-  return "/api/ics";
+  return `https://${FALLBACK_SUPABASE_PROJECT_REF}.functions.supabase.co/icloud-ics-proxy`;
 }
 
 const CALENDAR_PROXY_ENDPOINT = resolveCalendarProxyEndpoint();
@@ -185,22 +178,11 @@ function buildCalendarProxyEndpointCandidates(): string[] {
     `https://${FALLBACK_SUPABASE_PROJECT_REF}.functions.supabase.co/icloud-ics-proxy`
   );
   candidates.push(CALENDAR_PROXY_ENDPOINT);
-  candidates.push("/api/ics");
 
   return Array.from(new Set(candidates.filter(Boolean)));
 }
 
 const CALENDAR_PROXY_ENDPOINT_CANDIDATES = buildCalendarProxyEndpointCandidates();
-
-function buildCalendarProxyRequestUrlForEndpoint(
-  endpoint: string,
-  normalizedCalendarUrl: string
-): string {
-  if (endpoint === "/api/ics") {
-    return `/api/ics?url=${encodeURIComponent(normalizedCalendarUrl)}`;
-  }
-  return `${endpoint}?t=${Date.now()}`;
-}
 
 function parseIcsDateValue(rawValue: string): Date | null {
   const value = rawValue.trim();
@@ -291,6 +273,7 @@ function expandRecurringEventForWeek(
       end,
       summary: rawEvent.summary,
       description: rawEvent.description,
+      uid: rawEvent.uid,
     };
   };
 
@@ -444,6 +427,7 @@ function extractIcsEventPeriods(
   let dtEndRaw: string | null = null;
   let summaryRaw: string | null = null;
   let descriptionRaw: string | null = null;
+  let uidRaw: string | null = null;
   let rruleRaw: string | null = null;
   const exdateRawList: string[] = [];
   let statusCancelled = false;
@@ -462,6 +446,7 @@ function extractIcsEventPeriods(
 
     const summary = summaryRaw ? decodeIcsText(summaryRaw).trim() : "";
     const description = descriptionRaw ? decodeIcsText(descriptionRaw).trim() : "";
+    const uid = uidRaw ? decodeIcsText(uidRaw).trim() : "";
     const exdates = exdateRawList.flatMap((value) => parseIcsDateList(value));
 
     rawEvents.push({
@@ -469,6 +454,7 @@ function extractIcsEventPeriods(
       end,
       summary: summary || "Aktivitet",
       description,
+      uid,
       rrule: rruleRaw,
       exdates,
     });
@@ -481,6 +467,7 @@ function extractIcsEventPeriods(
       dtEndRaw = null;
       summaryRaw = null;
       descriptionRaw = null;
+      uidRaw = null;
       rruleRaw = null;
       exdateRawList.length = 0;
       statusCancelled = false;
@@ -508,6 +495,10 @@ function extractIcsEventPeriods(
     }
     if (line.startsWith("SUMMARY")) {
       summaryRaw = line.split(":").slice(1).join(":") || null;
+      return;
+    }
+    if (line.startsWith("UID")) {
+      uidRaw = line.split(":").slice(1).join(":") || null;
       return;
     }
     if (line.startsWith("DESCRIPTION")) {
@@ -987,36 +978,147 @@ const MealPlanner: React.FC<MealPlannerProps> = ({
     });
 
   const syncCalendarBusyDays = async () => {
-    const normalizedUrl = normalizeCalendarUrl(CALENDAR_ICS_URL);
-    if (!normalizedUrl) return;
-
-    for (const endpoint of CALENDAR_PROXY_ENDPOINT_CANDIDATES) {
-      try {
-        const requestUrl = buildCalendarProxyRequestUrlForEndpoint(endpoint, normalizedUrl);
-        const response = await fetch(requestUrl, { cache: "no-store" });
-        const responseText = await response.text();
-
-        if (!response.ok) {
-          continue;
-        }
-
-        const events = extractIcsEventPeriods(responseText, selectedWeek);
-        const filteredEvents = events.filter((event) => {
-          const normalizedSummary = normalizeSummaryForMatch(event.summary);
-          const hasExportTag = /X-MATPLAN-EXPORT:1/i.test(event.description);
-          if (hasExportTag) return false;
-          if (!normalizedSummary) return true;
-          return !excludedCalendarSummaries.has(normalizedSummary);
-        });
-
-        setBusyDaytimeDays(computeBusyDaytimeDays(selectedWeek, filteredEvents));
-        setBusyEveningDays(computeBusyEveningDays(selectedWeek, filteredEvents));
-        setDaytimeEventsByDay(buildWeekDaytimeEvents(selectedWeek, filteredEvents));
-        setEveningEventsByDay(buildWeekEveningEvents(selectedWeek, filteredEvents));
+    try {
+      // Extra skydd: synka endast om aktuell användare faktiskt har en egen kalender-URL.
+      // Detta förhindrar att en ny användare "ärver" kalenderkoppling via felkonfigurerad backend.
+      const { data: userData, error: userError } = await supabase.auth.getUser();
+      if (userError || !userData?.user) {
+        setBusyDaytimeDays(new Set());
+        setBusyEveningDays(new Set());
+        setDaytimeEventsByDay(new Map());
+        setEveningEventsByDay(new Map());
         return;
-      } catch {
-        // Prova nästa endpoint-kandidat.
       }
+
+      // Synka endast om användaren har minst en aktiv kalender i user_calendars.
+      const { data: calendarsData, error: calendarsError } = await supabase
+        .from("user_calendars")
+        .select("id")
+        .eq("user_id", userData.user.id)
+        .eq("is_active", true)
+        .limit(1);
+
+      const hasCalendar = !calendarsError && (calendarsData?.length ?? 0) > 0;
+
+      if (!hasCalendar) {
+        console.info("CALENDAR SYNC SKIPPED: no active user calendar for current user");
+        setBusyDaytimeDays(new Set());
+        setBusyEveningDays(new Set());
+        setDaytimeEventsByDay(new Map());
+        setEveningEventsByDay(new Map());
+        return;
+      }
+
+      // Primär väg: låt supabase-klienten anropa Edge Function med korrekta auth-headers.
+      const { data, error } = await supabase.functions.invoke("icloud-ics-proxy", {
+        method: "GET",
+      });
+
+      if (error) {
+        throw new Error(error.message || "Function invoke failed");
+      }
+
+      const icsText =
+        typeof data === "string"
+          ? data
+          : data instanceof Blob
+          ? await data.text()
+          : String(data ?? "");
+
+      if (!icsText.includes("BEGIN:VCALENDAR")) {
+        throw new Error(`Unexpected function payload: ${icsText.slice(0, 120)}`);
+      }
+
+      const events = extractIcsEventPeriods(icsText, selectedWeek);
+      const filteredEvents = events.filter((event) => {
+        const normalizedSummary = normalizeSummaryForMatch(event.summary);
+        const hasExportTag = /X-MATPLAN-EXPORT:1/i.test(event.description);
+        const looksLikeMatplanUid = /@matplan/i.test(event.uid);
+        if (hasExportTag || looksLikeMatplanUid) return false;
+        if (!normalizedSummary) return true;
+        return !excludedCalendarSummaries.has(normalizedSummary);
+      });
+
+      setBusyDaytimeDays(computeBusyDaytimeDays(selectedWeek, filteredEvents));
+      setBusyEveningDays(computeBusyEveningDays(selectedWeek, filteredEvents));
+      setDaytimeEventsByDay(buildWeekDaytimeEvents(selectedWeek, filteredEvents));
+      setEveningEventsByDay(buildWeekEveningEvents(selectedWeek, filteredEvents));
+      console.info("CALENDAR SYNC OK:", {
+        totalEvents: events.length,
+        filteredEvents: filteredEvents.length,
+      });
+      return;
+    } catch (primaryError) {
+      const failures: Array<{ endpoint: string; status?: number; body?: string; error?: string }> = [
+        {
+          endpoint: "supabase.functions.invoke(icloud-ics-proxy)",
+          error:
+            primaryError instanceof Error ? primaryError.message : String(primaryError),
+        },
+      ];
+
+      // Fallback: explicit URL-anrop om invoke av någon anledning inte fungerar i miljön.
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData.session?.access_token;
+      const anonKey = (import.meta as any)?.env?.VITE_SUPABASE_ANON_KEY?.trim?.() ?? "";
+
+      if (accessToken) {
+        for (const endpoint of CALENDAR_PROXY_ENDPOINT_CANDIDATES) {
+          try {
+            const requestUrl = `${endpoint}?t=${Date.now()}`;
+            const response = await fetch(requestUrl, {
+              cache: "no-store",
+              headers: {
+                Authorization: `Bearer ${accessToken}`,
+                apikey: anonKey,
+              },
+            });
+            const responseText = await response.text();
+
+            if (!response.ok) {
+              failures.push({
+                endpoint,
+                status: response.status,
+                body: responseText.slice(0, 200),
+              });
+              continue;
+            }
+
+            const events = extractIcsEventPeriods(responseText, selectedWeek);
+            const filteredEvents = events.filter((event) => {
+              const normalizedSummary = normalizeSummaryForMatch(event.summary);
+              const hasExportTag = /X-MATPLAN-EXPORT:1/i.test(event.description);
+              const looksLikeMatplanUid = /@matplan/i.test(event.uid);
+              if (hasExportTag || looksLikeMatplanUid) return false;
+              if (!normalizedSummary) return true;
+              return !excludedCalendarSummaries.has(normalizedSummary);
+            });
+
+            setBusyDaytimeDays(computeBusyDaytimeDays(selectedWeek, filteredEvents));
+            setBusyEveningDays(computeBusyEveningDays(selectedWeek, filteredEvents));
+            setDaytimeEventsByDay(buildWeekDaytimeEvents(selectedWeek, filteredEvents));
+            setEveningEventsByDay(buildWeekEveningEvents(selectedWeek, filteredEvents));
+            console.info("CALENDAR SYNC OK (fallback):", {
+              endpoint,
+              totalEvents: events.length,
+              filteredEvents: filteredEvents.length,
+            });
+            return;
+          } catch (error) {
+            failures.push({
+              endpoint,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
+      } else {
+        failures.push({
+          endpoint: "fallback-fetch",
+          error: "No access token for fallback fetch",
+        });
+      }
+
+      console.error("CALENDAR SYNC FAILED:", failures);
     }
 
     setBusyDaytimeDays(new Set());
