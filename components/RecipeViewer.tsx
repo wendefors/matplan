@@ -136,7 +136,7 @@ const RecipeViewer: React.FC = () => {
         }}
       >
         <div className="min-h-full p-4 [@media(orientation:landscape)]:h-full [@media(orientation:landscape)]:min-h-0 [@media(orientation:landscape)]:p-2">
-          <div className="grid grid-cols-1 gap-4 [@media(orientation:landscape)]:h-full [@media(orientation:landscape)]:min-h-0 [@media(orientation:landscape)]:grid-cols-2 [@media(orientation:landscape)]:gap-2">
+          <div className="grid grid-cols-1 gap-4 [@media(orientation:landscape)]:h-full [@media(orientation:landscape)]:min-h-0 [@media(orientation:landscape)]:grid-cols-[1fr_2fr] [@media(orientation:landscape)]:gap-2">
           <section
             className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm [@media(orientation:landscape)]:min-h-0 [@media(orientation:landscape)]:overflow-y-auto [@media(orientation:landscape)]:overscroll-contain [@media(orientation:landscape)]:rounded-none [@media(orientation:landscape)]:border-0 [@media(orientation:landscape)]:shadow-none [@media(orientation:landscape)]:p-2"
             style={{
