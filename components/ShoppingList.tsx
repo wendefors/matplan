@@ -126,6 +126,7 @@ const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
   });
   const [loadedEntries, setLoadedEntries] = useState<LoadedRecipeEntry[]>([]);
   const [servingsByMeal, setServingsByMeal] = useState<Record<string, number>>({});
+  const [excludedMealKeys, setExcludedMealKeys] = useState<Record<string, true>>({});
   const [manualMergeMap, setManualMergeMap] = useState<Record<string, string>>({});
   const [removedIngredientIds, setRemovedIngredientIds] = useState<Record<string, true>>({});
   const [draggingIngredientId, setDraggingIngredientId] = useState<string | null>(null);
@@ -133,6 +134,8 @@ const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [mergeError, setMergeError] = useState<string | null>(null);
+
+  const getMealKey = (dayId: number, slot: MealSlotType) => `${dayId}-${slot}`;
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -289,6 +292,7 @@ const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
     const unsummed: UnsummedIngredientRow[] = [];
 
     for (const entry of loadedEntries) {
+      if (excludedMealKeys[getMealKey(entry.dayId, entry.slot)]) continue;
       if (!entry.full || entry.full.ingredients.length === 0) continue;
 
       const baseServings = Math.max(1, Math.round(entry.recipe.baseServings || 4));
@@ -339,15 +343,22 @@ const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
       summed: Array.from(summed.values()).sort((a, b) => a.name.localeCompare(b.name, "sv")),
       unsummed,
     };
-  }, [loadedEntries, servingsByMeal]);
+  }, [loadedEntries, servingsByMeal, excludedMealKeys]);
 
   useEffect(() => {
     setManualMergeMap({});
     setRemovedIngredientIds({});
+    setExcludedMealKeys({});
     setDraggingIngredientId(null);
     setDropTargetId(null);
     setMergeError(null);
   }, [selectedWeek]);
+
+  const visibleLoadedEntries = useMemo(
+    () =>
+      loadedEntries.filter((entry) => !excludedMealKeys[getMealKey(entry.dayId, entry.slot)]),
+    [loadedEntries, excludedMealKeys]
+  );
 
   const summedIngredients = useMemo(() => {
     const rowMap = new Map(
@@ -387,10 +398,10 @@ const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
 
   const missingRecipeContent = useMemo(
     () =>
-      loadedEntries.filter(
+      visibleLoadedEntries.filter(
         (entry) => entry.error || !entry.full || entry.full.ingredients.length === 0
       ),
-    [loadedEntries]
+    [visibleLoadedEntries]
   );
 
   const formatAmount = (amount: number) => {
@@ -497,12 +508,21 @@ const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
         </h2>
         {isLoading && <p className="text-xs text-gray-500">Laddar receptunderlag...</p>}
         {error && <p className="text-xs text-red-600">{error}</p>}
-        {!isLoading && loadedEntries.length === 0 && freeTextDays.length === 0 && (
+        {!isLoading && visibleLoadedEntries.length === 0 && freeTextDays.length === 0 && (
           <p className="text-xs text-gray-500">Inga valda rätter för veckan.</p>
         )}
-        {loadedEntries.map((entry) => (
+        {Object.keys(excludedMealKeys).length > 0 && (
+          <button
+            type="button"
+            onClick={() => setExcludedMealKeys({})}
+            className="text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-100 px-3 py-1.5 rounded-lg"
+          >
+            Återställ borttagna rätter
+          </button>
+        )}
+        {visibleLoadedEntries.map((entry) => (
           <div
-            key={`${entry.dayId}-${entry.recipe.id}`}
+            key={`${entry.dayId}-${entry.slot}-${entry.recipe.id}`}
             className="rounded-2xl border border-gray-100 p-4 bg-gray-50 space-y-3"
           >
             <div className="flex items-center justify-between gap-3">
@@ -521,6 +541,19 @@ const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
                 Grund: {entry.recipe.baseServings} portioner
               </span>
               <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setExcludedMealKeys((prev) => ({
+                      ...prev,
+                      [getMealKey(entry.dayId, entry.slot)]: true,
+                    }))
+                  }
+                  className="px-2 py-1 text-[11px] rounded-lg bg-white border border-gray-200 text-gray-600 font-semibold"
+                  title="Ta bort denna rätt från inköpssammanställningen"
+                >
+                  Ta bort
+                </button>
                 <button
                   type="button"
                   onClick={() =>
