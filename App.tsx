@@ -571,7 +571,7 @@ const App: React.FC = () => {
         </header>
 
         <main
-          className="flex-1 overflow-y-auto px-4 pt-6 pb-[var(--nav-height)]"
+          className="flex-1 overflow-y-auto px-4 pt-6 pb-[var(--nav-height)] [@media(orientation:landscape)]:pb-4"
           style={{ "--nav-height": `${NAV_HEIGHT_PX}px` } as React.CSSProperties}
         >
           <Routes>
@@ -616,7 +616,7 @@ const App: React.FC = () => {
           </Routes>
         </main>
 
-        <nav className="fixed bottom-0 left-0 right-0 max-w-lg mx-auto bg-white border-t border-gray-100 flex shadow-2xl z-20">
+        <nav className="fixed bottom-0 left-0 right-0 max-w-lg mx-auto bg-white border-t border-gray-100 flex shadow-2xl z-20 [@media(orientation:landscape)]:hidden">
           <NavLink to="/">Planering</NavLink>
           <NavLink to="/recipes">Våra rätter</NavLink>
           <NavLink to="/shopping">Inköpslista</NavLink>
