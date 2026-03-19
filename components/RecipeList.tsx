@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { RECIPE_CATEGORIES, Recipe, RecipeCategory } from "../types";
 import RecipeMetaEditor from "./RecipeMetaEditor";
@@ -80,9 +80,9 @@ const RecipeList: React.FC<RecipeListProps> = ({
       // Annars kan första sparningen race:a mot refresh och se ut som "ej sparad".
       await Promise.resolve(onUpdateRecipes(next));
 
-      const refreshed = await onRefreshRecipes();
-      const refreshedRecipe = refreshed.find((recipe) => recipe.id === updatedRecipe.id);
-      if (refreshedRecipe) setSelectedRecipe(refreshedRecipe);
+      // Verifiera lagrat resultat innan editorn stängs.
+      await onRefreshRecipes();
+      setSelectedRecipe(null);
     } catch (error) {
       console.error("SAVE RECIPE META FAILED:", error);
       setMetaEditorError("Kunde inte spara metadata.");
@@ -99,6 +99,11 @@ const RecipeList: React.FC<RecipeListProps> = ({
     if (!isoString) return "Aldrig";
     return new Date(isoString).toLocaleDateString("sv-SE");
   };
+
+  useEffect(() => {
+    if (!selectedRecipe) return;
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, [selectedRecipe]);
 
   return (
     <div className="space-y-6 animate-fadeIn pb-24">
