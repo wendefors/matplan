@@ -551,7 +551,7 @@ const App: React.FC = () => {
   return (
     <HashRouter>
       <div className="min-h-screen flex flex-col max-w-lg mx-auto bg-white shadow-xl relative">
-        <header className="px-6 pt-8 pb-4 bg-white sticky top-0 z-10 border-b border-gray-100 [@media(orientation:landscape)]:static [@media(orientation:landscape)]:z-auto">
+        <header className="px-6 pt-8 pb-4 bg-white sticky top-0 z-10 border-b border-gray-100 [@media(orientation:landscape)_and_(hover:none)_and_(pointer:coarse)]:static [@media(orientation:landscape)_and_(hover:none)_and_(pointer:coarse)]:z-auto">
           <div className="flex items-start justify-between gap-3">
             <div>
               <h1 className="text-2xl font-bold text-gray-900 tracking-tight">
@@ -571,7 +571,7 @@ const App: React.FC = () => {
         </header>
 
         <main
-          className="flex-1 overflow-y-auto px-4 pt-6 pb-[var(--nav-height)] [@media(orientation:landscape)]:pb-4"
+          className="flex-1 overflow-y-auto px-4 pt-6 pb-[var(--nav-height)] [@media(orientation:landscape)_and_(hover:none)_and_(pointer:coarse)]:pb-4"
           style={{ "--nav-height": `${NAV_HEIGHT_PX}px` } as React.CSSProperties}
         >
           <Routes>
@@ -616,7 +616,7 @@ const App: React.FC = () => {
           </Routes>
         </main>
 
-        <nav className="fixed bottom-0 left-0 right-0 max-w-lg mx-auto bg-white border-t border-gray-100 flex shadow-2xl z-20 [@media(orientation:landscape)]:hidden">
+        <nav className="fixed bottom-0 left-0 right-0 max-w-lg mx-auto bg-white border-t border-gray-100 flex shadow-2xl z-20 [@media(orientation:landscape)_and_(hover:none)_and_(pointer:coarse)]:hidden">
           <NavLink to="/">Planering</NavLink>
           <NavLink to="/recipes">Våra rätter</NavLink>
           <NavLink to="/shopping">Inköpslista</NavLink>
