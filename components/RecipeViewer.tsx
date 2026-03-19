@@ -135,10 +135,10 @@ const RecipeViewer: React.FC = () => {
           paddingBottom: "calc(1rem + env(safe-area-inset-bottom, 0px))",
         }}
       >
-        <div className="min-h-full p-4 [@media(orientation:landscape)]:h-full [@media(orientation:landscape)]:min-h-0">
-          <div className="grid grid-cols-1 gap-4 [@media(orientation:landscape)]:h-full [@media(orientation:landscape)]:min-h-0 [@media(orientation:landscape)]:grid-cols-2">
+        <div className="min-h-full p-4 [@media(orientation:landscape)]:h-full [@media(orientation:landscape)]:min-h-0 [@media(orientation:landscape)]:p-2">
+          <div className="grid grid-cols-1 gap-4 [@media(orientation:landscape)]:h-full [@media(orientation:landscape)]:min-h-0 [@media(orientation:landscape)]:grid-cols-2 [@media(orientation:landscape)]:gap-2">
           <section
-            className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm [@media(orientation:landscape)]:min-h-0 [@media(orientation:landscape)]:overflow-y-auto [@media(orientation:landscape)]:overscroll-contain"
+            className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm [@media(orientation:landscape)]:min-h-0 [@media(orientation:landscape)]:overflow-y-auto [@media(orientation:landscape)]:overscroll-contain [@media(orientation:landscape)]:rounded-none [@media(orientation:landscape)]:border-0 [@media(orientation:landscape)]:shadow-none [@media(orientation:landscape)]:p-2"
             style={{
               WebkitOverflowScrolling: "touch",
             }}
@@ -163,7 +163,7 @@ const RecipeViewer: React.FC = () => {
                   .map((ingredient) => (
                     <li
                       key={ingredient.id ?? `${ingredient.sortOrder}-${ingredient.name}`}
-                      className="text-lg leading-tight text-gray-800 [@media(orientation:landscape)]:text-sm"
+                      className="text-sm leading-tight text-gray-800"
                     >
                       {ingredient.amount !== null
                         ? `${formatScaledAmount(ingredient.amount, servingFactor)} `
@@ -175,12 +175,12 @@ const RecipeViewer: React.FC = () => {
                   ))}
               </ul>
             ) : (
-              <p className="text-lg text-gray-500">Inga ingredienser.</p>
+              <p className="text-sm text-gray-500">Inga ingredienser.</p>
             )}
           </section>
 
           <section
-            className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm [@media(orientation:landscape)]:min-h-0 [@media(orientation:landscape)]:overflow-y-auto [@media(orientation:landscape)]:overscroll-contain"
+            className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm [@media(orientation:landscape)]:min-h-0 [@media(orientation:landscape)]:overflow-y-auto [@media(orientation:landscape)]:overscroll-contain [@media(orientation:landscape)]:rounded-none [@media(orientation:landscape)]:border-0 [@media(orientation:landscape)]:shadow-none [@media(orientation:landscape)]:p-2"
             style={{
               WebkitOverflowScrolling: "touch",
             }}
@@ -223,7 +223,7 @@ const RecipeViewer: React.FC = () => {
                           className="mt-1 h-5 w-5"
                         />
                         <span
-                          className={`text-lg leading-tight [@media(orientation:landscape)]:text-sm ${
+                          className={`text-sm leading-tight ${
                             isCompleted ? "line-through text-gray-400" : "text-gray-800"
                           }`}
                         >
@@ -235,7 +235,7 @@ const RecipeViewer: React.FC = () => {
                 })}
               </ol>
             ) : (
-              <p className="text-lg text-gray-500">Inga steg.</p>
+              <p className="text-sm text-gray-500">Inga steg.</p>
             )}
           </section>
         </div>
