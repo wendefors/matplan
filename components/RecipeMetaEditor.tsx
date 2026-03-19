@@ -74,16 +74,16 @@ const RecipeMetaEditor: React.FC<RecipeMetaEditorProps> = ({
   return (
     <form
       onSubmit={handleSubmit}
-      className="bg-emerald-50 p-6 rounded-3xl border border-emerald-100 space-y-4 animate-fadeIn"
+      className="bg-emerald-50 p-5 rounded-3xl border border-emerald-100 space-y-3 animate-fadeIn"
     >
       <div className="flex items-center justify-between">
-        <h3 className="text-lg font-bold text-emerald-900">
+        <h3 className="text-base font-bold text-emerald-900">
           Ändra rätt: {recipe.name}
         </h3>
         <button
           type="button"
           onClick={onClose}
-          className="text-sm font-semibold text-emerald-700"
+          className="text-xs font-semibold text-emerald-700"
         >
           Stäng
         </button>
@@ -94,10 +94,9 @@ const RecipeMetaEditor: React.FC<RecipeMetaEditorProps> = ({
           Namn
         </label>
         <input
-          autoFocus
           value={name}
           onChange={(e) => setName(e.target.value)}
-          className="w-full p-3 bg-white border-none rounded-xl focus:ring-2 focus:ring-emerald-500"
+          className="w-full p-2.5 text-sm bg-white border-none rounded-xl focus:ring-2 focus:ring-emerald-500"
           placeholder="T.ex. Lasagne"
         />
       </div>
@@ -109,7 +108,7 @@ const RecipeMetaEditor: React.FC<RecipeMetaEditorProps> = ({
         <select
           value={category}
           onChange={(e) => setCategory(e.target.value as RecipeCategory)}
-          className="w-full p-3 bg-white border-none rounded-xl focus:ring-2 focus:ring-emerald-500"
+          className="w-full p-2.5 text-sm bg-white border-none rounded-xl focus:ring-2 focus:ring-emerald-500"
         >
           {RECIPE_CATEGORIES.map((cat) => (
             <option key={cat} value={cat}>
@@ -126,7 +125,7 @@ const RecipeMetaEditor: React.FC<RecipeMetaEditorProps> = ({
         <input
           value={source}
           onChange={(e) => setSource(e.target.value)}
-          className="w-full p-3 bg-white border-none rounded-xl focus:ring-2 focus:ring-emerald-500"
+          className="w-full p-2.5 text-sm bg-white border-none rounded-xl focus:ring-2 focus:ring-emerald-500"
           placeholder="T.ex. ICA.se"
         />
       </div>
@@ -142,12 +141,12 @@ const RecipeMetaEditor: React.FC<RecipeMetaEditorProps> = ({
           inputMode="numeric"
           value={baseServingsInput}
           onChange={(e) => setBaseServingsInput(e.target.value)}
-          className="w-full p-3 bg-white border-none rounded-xl focus:ring-2 focus:ring-emerald-500"
+          className="w-full p-2.5 text-sm bg-white border-none rounded-xl focus:ring-2 focus:ring-emerald-500"
           placeholder="4"
         />
       </div>
 
-      <label className="flex items-center gap-2 text-sm text-emerald-800 font-medium">
+      <label className="flex items-center gap-2 text-xs text-emerald-800 font-medium">
         <input
           type="checkbox"
           checked={hasRecipeContent}
@@ -160,19 +159,19 @@ const RecipeMetaEditor: React.FC<RecipeMetaEditorProps> = ({
         <button
           type="button"
           onClick={() => setLastCooked(null)}
-          className="text-xs bg-white border border-emerald-200 text-emerald-700 px-3 py-2 rounded-lg font-semibold"
+          className="text-[11px] bg-white border border-emerald-200 text-emerald-700 px-2.5 py-1.5 rounded-lg font-semibold"
         >
           Nollställ senast lagad
         </button>
       )}
 
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && <p className="text-xs text-red-600">{error}</p>}
 
       <div className="flex flex-col gap-2 pt-2">
         <button
           type="submit"
           disabled={isSaving}
-          className="w-full bg-emerald-600 text-white py-3 rounded-xl font-bold disabled:opacity-60"
+          className="w-full bg-emerald-600 text-white py-2.5 text-sm rounded-xl font-bold disabled:opacity-60"
         >
           {isSaving ? "Sparar..." : "Spara metadata"}
         </button>
@@ -180,7 +179,7 @@ const RecipeMetaEditor: React.FC<RecipeMetaEditorProps> = ({
         <button
           type="button"
           onClick={() => onEditContent(recipe.id)}
-          className="w-full bg-gray-900 text-white py-3 rounded-xl font-bold"
+          className="w-full bg-gray-900 text-white py-2.5 text-sm rounded-xl font-bold"
         >
           Redigera receptinnehåll
         </button>
@@ -188,7 +187,7 @@ const RecipeMetaEditor: React.FC<RecipeMetaEditorProps> = ({
         <button
           type="button"
           onClick={() => onViewRecipe(recipe.id)}
-          className="w-full bg-white border border-emerald-200 text-emerald-700 py-3 rounded-xl font-bold"
+          className="w-full bg-white border border-emerald-200 text-emerald-700 py-2.5 text-sm rounded-xl font-bold"
         >
           Visa recept
         </button>
