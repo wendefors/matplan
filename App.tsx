@@ -551,7 +551,7 @@ const App: React.FC = () => {
   return (
     <HashRouter>
       <div className="min-h-screen flex flex-col max-w-lg mx-auto bg-white shadow-xl relative">
-        <header className="px-6 pt-8 pb-4 bg-white sticky top-0 z-10 border-b border-gray-100">
+        <header className="px-6 pt-8 pb-4 bg-white sticky top-0 z-10 border-b border-gray-100 [@media(orientation:landscape)]:static [@media(orientation:landscape)]:z-auto">
           <div className="flex items-start justify-between gap-3">
             <div>
               <h1 className="text-2xl font-bold text-gray-900 tracking-tight">
