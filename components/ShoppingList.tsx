@@ -354,7 +354,7 @@ const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
     setMergeError(null);
   }, [selectedWeek]);
 
-  const visibleLoadedEntries = useMemo(
+  const activeLoadedEntries = useMemo(
     () =>
       loadedEntries.filter((entry) => !excludedMealKeys[getMealKey(entry.dayId, entry.slot)]),
     [loadedEntries, excludedMealKeys]
@@ -398,10 +398,10 @@ const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
 
   const missingRecipeContent = useMemo(
     () =>
-      visibleLoadedEntries.filter(
+      activeLoadedEntries.filter(
         (entry) => entry.error || !entry.full || entry.full.ingredients.length === 0
       ),
-    [visibleLoadedEntries]
+    [activeLoadedEntries]
   );
 
   const formatAmount = (amount: number) => {
@@ -508,88 +508,108 @@ const ShoppingList: React.FC<ShoppingListProps> = ({ recipes, plans }) => {
         </h2>
         {isLoading && <p className="text-xs text-gray-500">Laddar receptunderlag...</p>}
         {error && <p className="text-xs text-red-600">{error}</p>}
-        {!isLoading && visibleLoadedEntries.length === 0 && freeTextDays.length === 0 && (
+        {!isLoading && loadedEntries.length === 0 && freeTextDays.length === 0 && (
           <p className="text-xs text-gray-500">Inga valda rätter för veckan.</p>
         )}
-        {Object.keys(excludedMealKeys).length > 0 && (
-          <button
-            type="button"
-            onClick={() => setExcludedMealKeys({})}
-            className="text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-100 px-3 py-1.5 rounded-lg"
-          >
-            Återställ borttagna rätter
-          </button>
-        )}
-        {visibleLoadedEntries.map((entry) => (
-          <div
-            key={`${entry.dayId}-${entry.slot}-${entry.recipe.id}`}
-            className="rounded-2xl border border-gray-100 p-4 bg-gray-50 space-y-3"
-          >
+        {loadedEntries.map((entry) => {
+          const mealKey = getMealKey(entry.dayId, entry.slot);
+          const isActive = !excludedMealKeys[mealKey];
+
+          return (
+            <div
+              key={`${entry.dayId}-${entry.slot}-${entry.recipe.id}`}
+              onClick={() =>
+                setExcludedMealKeys((prev) => {
+                  if (prev[mealKey]) {
+                    const { [mealKey]: _, ...rest } = prev;
+                    return rest;
+                  }
+                  return { ...prev, [mealKey]: true };
+                })
+              }
+              className={`rounded-2xl border p-4 space-y-3 cursor-pointer transition-colors ${
+                isActive
+                  ? "bg-emerald-50/40 border-emerald-300 ring-1 ring-emerald-200"
+                  : "bg-gray-100 border-transparent"
+              }`}
+            >
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
-                <p className="text-[10px] font-bold uppercase tracking-widest text-gray-500">
+                <p
+                  className={`text-[10px] font-bold uppercase tracking-widest ${
+                    isActive ? "text-gray-500" : "text-gray-400"
+                  }`}
+                >
                   Dag {entry.dayId + 1} - {entry.slot === "lunch" ? "Lunch" : "Kvällsmat"}
                 </p>
-                <h3 className="text-sm font-bold text-gray-900 truncate">{entry.recipe.name}</h3>
+                <h3
+                  className={`text-sm font-bold truncate ${
+                    isActive ? "text-gray-900" : "text-gray-400"
+                  }`}
+                >
+                  {entry.recipe.name}
+                </h3>
               </div>
-              <span className="text-[10px] bg-white border border-gray-200 text-gray-500 px-2 py-1 rounded-full font-bold uppercase">
+              <span
+                className={`text-[10px] px-2 py-1 rounded-full font-bold uppercase ${
+                  isActive
+                    ? "bg-white border border-gray-200 text-gray-500"
+                    : "bg-gray-200 border border-gray-200 text-gray-400"
+                }`}
+              >
                 {entry.recipe.category}
               </span>
             </div>
             <div className="flex items-center justify-between gap-3">
-              <span className="text-xs text-gray-500">
+              <span className={`text-xs ${isActive ? "text-gray-500" : "text-gray-400"}`}>
                 Grund: {entry.recipe.baseServings} portioner
               </span>
               <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() =>
-                    setExcludedMealKeys((prev) => ({
-                      ...prev,
-                      [getMealKey(entry.dayId, entry.slot)]: true,
-                    }))
-                  }
-                  className="px-2 py-1 text-[11px] rounded-lg bg-white border border-gray-200 text-gray-600 font-semibold"
-                  title="Ta bort denna rätt från inköpssammanställningen"
-                >
-                  Ta bort
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setServingsByMeal((prev) => ({
-                      ...prev,
-                      [`${entry.dayId}-${entry.slot}`]: Math.max(
-                        1,
-                        (prev[`${entry.dayId}-${entry.slot}`] || entry.recipe.baseServings) - 1
-                      ),
-                    }))
-                  }
-                  className="h-8 w-8 rounded-lg bg-white border border-gray-200 font-bold text-gray-700"
-                >
-                  -
-                </button>
-                <span className="min-w-12 text-center text-xs font-semibold text-gray-900">
-                  {servingsByMeal[`${entry.dayId}-${entry.slot}`] ||
-                    entry.recipe.baseServings}
-                </span>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setServingsByMeal((prev) => ({
-                      ...prev,
-                      [`${entry.dayId}-${entry.slot}`]:
-                        (prev[`${entry.dayId}-${entry.slot}`] || entry.recipe.baseServings) + 1,
-                    }))
-                  }
-                  className="h-8 w-8 rounded-lg bg-white border border-gray-200 font-bold text-gray-700"
-                >
-                  +
-                </button>
+                {isActive && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setServingsByMeal((prev) => ({
+                          ...prev,
+                          [`${entry.dayId}-${entry.slot}`]: Math.max(
+                            1,
+                            (prev[`${entry.dayId}-${entry.slot}`] ||
+                              entry.recipe.baseServings) - 1
+                          ),
+                        }));
+                      }}
+                      className="h-8 w-8 rounded-lg bg-white border border-gray-200 font-bold text-gray-700"
+                    >
+                      -
+                    </button>
+                    <span className="min-w-12 text-center text-xs font-semibold text-gray-900">
+                      {servingsByMeal[`${entry.dayId}-${entry.slot}`] ||
+                        entry.recipe.baseServings}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setServingsByMeal((prev) => ({
+                          ...prev,
+                          [`${entry.dayId}-${entry.slot}`]:
+                            (prev[`${entry.dayId}-${entry.slot}`] ||
+                              entry.recipe.baseServings) + 1,
+                        }));
+                      }}
+                      className="h-8 w-8 rounded-lg bg-white border border-gray-200 font-bold text-gray-700"
+                    >
+                      +
+                    </button>
+                  </>
+                )}
               </div>
             </div>
-          </div>
-        ))}
+            </div>
+          );
+        })}
       </section>
 
       <section className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 space-y-3">
